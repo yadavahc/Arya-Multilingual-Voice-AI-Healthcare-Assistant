@@ -1,0 +1,22 @@
+{
+  "name": "arya",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Arya — Multilingual Voice AI Clinical Companion",
+  "workspaces": [
+    "apps/web",
+    "packages/shared",
+    "functions"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/web",
+    "build": "npm run build --workspace packages/shared && npm run build --workspace apps/web",
+    "lint": "npm run lint --workspace apps/web",
+    "agent:dev": "python apps/agent/agent.py dev",
+    "api:dev": "uvicorn services.api.main:app --reload --port 8080 --app-dir services/api",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

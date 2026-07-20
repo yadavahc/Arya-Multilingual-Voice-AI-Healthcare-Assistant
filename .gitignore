@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+
+# Env & secrets
+.env
+.env.local
+.env*.local
+*serviceAccount*.json
+firebase-adminsdk-*.json
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+/functions/lib/
+next-env.d.ts
+*.tsbuildinfo
+
+# Firebase
+.firebase/
+.firebaserc
+firebase-debug.log
+
+# Misc
+.DS_Store
+*.log
+.turbo/
+coverage/
+.vscode/
+.idea/
+
+# Generated assets
+apps/web/public/generated/
