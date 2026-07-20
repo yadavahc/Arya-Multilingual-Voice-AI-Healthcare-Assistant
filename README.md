@@ -15,7 +15,6 @@ Separate sign-in portals keep the two worlds apart: **patients** talk to Arya;
 
 ## Table of contents
 
-- [What's working](#whats-working)
 - [Architecture](#architecture)
 - [Repo layout](#repo-layout)
 - [Quick start](#quick-start)
@@ -26,30 +25,6 @@ Separate sign-in portals keep the two worlds apart: **patients** talk to Arya;
 - [How Arya works](#how-arya-works)
 - [Latency engineering](#latency-engineering)
 - [Security notes](#security-notes)
-
----
-
-## What's working
-
-| Capability | Status | Notes |
-|---|---|---|
-| Doctor / patient login portals | ✅ | Phone-based, role-separated, role-guarded routes |
-| Arya conversational brain (chat) | ✅ | Answers meds/diet/rest/follow-up; books & reschedules |
-| Arya voice (browser + telephony) | ✅ | OpenAI Realtime over LiveKit; needs LiveKit keys |
-| Patient context (history, meds, care plan) | ✅ | Loaded before Arya greets |
-| SOAP note + ICD-10 + differentials | ✅ | LangGraph pipeline, offline-safe fallback |
-| Ambient gap-detection ("Arya Nudge") | ✅ | Silent checklist cards for the doctor |
-| Red-flag triage + escalation | ✅ | Sub-ms classifier, SMS + push |
-| Admin analytics dashboard | ✅ | Language mix, red-flag catches, latency |
-| Firestore persistence + audit log | ✅ | Falls back to in-memory without keys |
-| Payments (Razorpay link) | ⚙️ | Voice/chat tool + webhook; real keys optional |
-| Telephony SIP bridge | ⚙️ | Documented in `infra/telephony.md` |
-| SMS/IVR rural fallback | ⚙️ | Messaging helpers + docs; TwiML handler is a stub |
-
-Legend: ✅ functional · ⚙️ partial/documented.
-
-Everything runs **offline** (in-memory store + heuristic fallbacks) so you can demo
-without any keys, and becomes fully real as you add them.
 
 ---
 
