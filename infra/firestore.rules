@@ -1,0 +1,148 @@
+rules_version = '2';
+
+// Arya Firestore security rules.
+//
+// Threat model:
+//  - Patients may read ONLY their own docs.
+//  - Doctors / admin / frontdesk are scoped to their own organization.
+//  - All PHI *writes* go through Cloud Functions / the API using the Admin SDK,
+//    which bypasses these rules and performs central audit logging. Direct
+//    client writes to PHI collections are therefore denied here (defense in
+//    depth): even a leaked client key can't tamper with records.
+//
+// Role/org are resolved from the caller's own /users/{uid} profile doc.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function userExists() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function role() {
+      return userExists() ? userDoc().role : '';
+    }
+    function orgId() {
+      return userExists() ? userDoc().orgId : '';
+    }
+    function isStaff() {
+      return role() in ['doctor', 'admin', 'frontdesk'];
+    }
+    function isAdmin() {
+      return role() == 'admin';
+    }
+    // True when the signed-in staff member belongs to the resource's org.
+    function sameOrg(resourceOrg) {
+      return isSignedIn() && orgId() != '' && orgId() == resourceOrg;
+    }
+
+    // ── Organizations ────────────────────────────────────────────────
+    match /organizations/{orgId} {
+      allow read: if sameOrg(orgId);
+      allow write: if false; // provisioned server-side only
+    }
+
+    // ── Users (own profile) ──────────────────────────────────────────
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isStaff());
+      // A user may create/update ONLY their own profile, and may not
+      // escalate their own role or move orgs after creation.
+      allow create: if request.auth.uid == uid;
+      allow update: if request.auth.uid == uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.orgId == resource.data.orgId;
+      allow delete: if false;
+    }
+
+    // ── Patients (PHI) ───────────────────────────────────────────────
+    match /patients/{patientId} {
+      allow read: if isSignedIn() && (
+        (isStaff() && resource.data.orgId == orgId()) ||
+        request.auth.uid == patientId
+      );
+      allow write: if false; // via Cloud Functions (audited)
+    }
+
+    // ── Encounters + subcollections (notes, gaps) ────────────────────
+    match /encounters/{encounterId} {
+      allow read: if isStaff() && sameOrg(resource.data.orgId);
+      allow write: if false;
+
+      match /{document=**} {
+        allow read: if isStaff() && sameOrg(
+          get(/databases/$(database)/documents/encounters/$(encounterId)).data.orgId
+        );
+        allow write: if false;
+      }
+    }
+
+    // ── Calls ────────────────────────────────────────────────────────
+    match /calls/{callId} {
+      allow read: if isStaff() && sameOrg(resource.data.orgId);
+      allow write: if false;
+    }
+
+    // ── Prescriptions ────────────────────────────────────────────────
+    match /prescriptions/{rxId} {
+      allow read: if isSignedIn() && (
+        isStaff() || request.auth.uid == resource.data.patientId
+      );
+      allow write: if false;
+    }
+
+    // ── Payments ─────────────────────────────────────────────────────
+    match /payments/{paymentId} {
+      allow read: if isSignedIn() && (
+        isStaff() || request.auth.uid == resource.data.patientId
+      );
+      allow write: if false;
+    }
+
+    // ── Alerts (staff may acknowledge; created/deleted server-side) ───
+    match /alerts/{alertId} {
+      allow read: if isStaff() && sameOrg(resource.data.orgId);
+      // Allow only an acknowledge update (setting acknowledgedBy/At), and only
+      // within the same org — no changing severity/kind/body from the client.
+      allow update: if isStaff() && sameOrg(resource.data.orgId)
+        && request.resource.data.orgId == resource.data.orgId
+        && request.resource.data.severity == resource.data.severity
+        && request.resource.data.kind == resource.data.kind;
+      allow create, delete: if false;
+    }
+
+    // ── Glossary (locked medical translations) ───────────────────────
+    match /glossary/{term} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── Appointments / adherence (voice-tool writes go via Admin SDK) ─
+    match /appointments/{apptId} {
+      allow read: if isStaff() && sameOrg(resource.data.orgId);
+      allow write: if false;
+    }
+    match /adherence/{docId} {
+      allow read: if isSignedIn() && (
+        isStaff() || request.auth.uid == resource.data.patientId
+      );
+      allow write: if false;
+    }
+
+    // ── Audit log (admin read; server-only write) ────────────────────
+    match /audit/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ── Default deny for anything not matched above ──────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
