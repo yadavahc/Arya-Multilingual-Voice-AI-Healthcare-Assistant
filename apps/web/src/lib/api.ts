@@ -18,7 +18,13 @@ export const api = {
   alerts: (orgId = 'demo-org') => j<{ alerts: any[] }>(`/alerts?orgId=${orgId}`),
   encounters: (orgId = 'demo-org') =>
     j<{ encounters: any[] }>(`/encounters?orgId=${orgId}`),
-  token: (body: { room: string; identity: string; name?: string; role?: string }) =>
+  token: (body: {
+    room: string;
+    identity: string;
+    name?: string;
+    role?: string;
+    patientId?: string;
+  }) =>
     j<{ token: string; url: string; room: string }>('/token', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -31,7 +37,40 @@ export const api = {
     }),
   sendPaymentLink: (body: { orgId: string; patientId?: string; amount: number; note?: string }) =>
     j<any>('/payments/link', { method: 'POST', body: JSON.stringify(body) }),
+  resolveIdentity: (phone: string, portal: 'doctor' | 'patient') =>
+    j<ResolvedIdentity>('/auth/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ phone, portal }),
+    }),
+  patientContext: (patientId: string) =>
+    j<{ context: any; summary: string }>(`/patients/${patientId}/context`),
+  aryaChat: (patientId: string, messages: ChatMessage[]) =>
+    j<AryaChatResp>('/arya/chat', {
+      method: 'POST',
+      body: JSON.stringify({ patientId, messages }),
+    }),
 };
+
+export interface ResolvedIdentity {
+  uid: string;
+  role: 'doctor' | 'patient' | 'admin' | 'frontdesk';
+  orgId: string;
+  displayName: string;
+  patientId?: string | null;
+  preferredLanguage: string;
+  isNew?: boolean;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AryaChatResp {
+  reply: string;
+  actions: { tool: string; args: any; result: any }[];
+  context_used: boolean;
+}
 
 export interface AnalyticsResp {
   docTimeSavedMinutes: number;

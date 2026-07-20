@@ -8,7 +8,10 @@ import { api } from './api';
  * the Python agent serves. Publishes the mic and plays back agent audio.
  * Falls back cleanly (status="unconfigured") when LiveKit env is missing.
  */
-export function useVoiceRoom(role: 'triage' | 'scribe' = 'scribe') {
+export function useVoiceRoom(
+  role: 'companion' | 'triage' | 'scribe' = 'scribe',
+  opts: { patientId?: string | null; identity?: string } = {},
+) {
   const roomRef = useRef<Room | null>(null);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'error' | 'unconfigured'>(
     'idle',
@@ -17,12 +20,13 @@ export function useVoiceRoom(role: 'triage' | 'scribe' = 'scribe') {
   const connect = useCallback(async () => {
     setStatus('connecting');
     try {
-      const roomName = `consult-${Date.now()}`;
+      const roomName = `${role}-${Date.now()}`;
       const { token, url } = await api.token({
         room: roomName,
-        identity: `doctor-${Math.random().toString(36).slice(2, 8)}`,
-        name: 'Doctor',
+        identity: opts.identity || `${role}-${Math.random().toString(36).slice(2, 8)}`,
+        name: opts.identity || role,
         role,
+        patientId: opts.patientId ?? undefined,
       });
       if (!url || token.startsWith('DEV_TOKEN')) {
         setStatus('unconfigured');
