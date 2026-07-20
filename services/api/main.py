@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from arya_brain import build_patient_context, chat as arya_chat, context_summary
 from config import get_settings
 from firestore_client import audit, db, mode
 from graphs.gap_graph import detect_gaps
@@ -70,13 +71,120 @@ class TokenReq(BaseModel):
     room: str
     identity: str
     name: str = ""
-    role: str = "triage"  # triage | scribe | adherence
+    role: str = "companion"  # companion | triage | scribe | adherence
+    patientId: Optional[str] = None
 
 
 @app.post("/token")
 def token(req: TokenReq) -> dict:
-    jwt = create_token(req.room, req.identity, req.name, metadata=req.role)
+    # Encode role + patient id in metadata so the agent picks the right persona
+    # and prefetches the caller's context during the ringing state.
+    import json as _json
+
+    meta = _json.dumps({"role": req.role, "patientId": req.patientId})
+    jwt = create_token(req.room, req.identity, req.name, metadata=meta)
     return {"token": jwt, "url": get_settings().livekit_url, "room": req.room}
+
+
+# ── Auth: resolve a phone number to a role/identity (login portals) ─────
+class ResolveReq(BaseModel):
+    phone: str
+    portal: str  # "doctor" | "patient"
+
+
+def _e164(phone: str) -> str:
+    """Normalize an Indian number to +91XXXXXXXXXX so lookups are format-agnostic."""
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if len(digits) == 10:
+        return f"+91{digits}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+{digits}"
+    return phone.strip() if phone.strip().startswith("+") else f"+{digits}"
+
+
+@app.post("/auth/resolve")
+def auth_resolve(req: ResolveReq) -> dict:
+    phone = _e164(req.phone)
+    # Find a user record by phone (comparing normalized forms).
+    match = next(
+        (s.to_dict() for s in db().collection("users").stream()
+         if _e164((s.to_dict() or {}).get("phone", "")) == phone),
+        None,
+    )
+    if match:
+        role = match.get("role")
+        # Enforce portal separation: doctors can't enter via the patient portal
+        # and vice-versa.
+        if req.portal == "doctor" and role not in ("doctor", "admin", "frontdesk"):
+            raise HTTPException(403, "This number is not registered as clinical staff.")
+        if req.portal == "patient" and role != "patient":
+            raise HTTPException(403, "This number is registered as staff; use the staff portal.")
+        return {
+            "uid": match.get("uid"), "role": role, "orgId": match.get("orgId"),
+            "displayName": match.get("displayName"), "patientId": match.get("patientId"),
+            "preferredLanguage": match.get("preferredLanguage", "en"),
+        }
+
+    # Unknown number. Doctors must be pre-registered; patients self-provision.
+    if req.portal == "doctor":
+        raise HTTPException(403, "No clinician found for this number. Contact your admin.")
+    pat_id = f"pat-{int(time.time()*1000)}"
+    db().collection("patients").document(pat_id).set(
+        {"id": pat_id, "orgId": "demo-org", "name": "New Patient", "phone": phone,
+         "preferredLanguage": "en", "allergies": [], "meds": [], "conditions": [],
+         "createdAt": _now_iso()}
+    )
+    uid = f"user-{pat_id}"
+    db().collection("users").document(uid).set(
+        {"uid": uid, "role": "patient", "orgId": "demo-org", "patientId": pat_id,
+         "displayName": "New Patient", "phone": phone, "preferredLanguage": "en", "createdAt": _now_iso()}
+    )
+    audit("system", "provision_patient", f"patients/{pat_id}")
+    return {"uid": uid, "role": "patient", "orgId": "demo-org", "displayName": "New Patient",
+            "patientId": pat_id, "preferredLanguage": "en", "isNew": True}
+
+
+# ── Patient context (Arya's knowledge for a call) ───────────────────────
+@app.get("/patients/{patient_id}/context")
+def patient_context(patient_id: str) -> dict:
+    ctx = build_patient_context(patient_id)
+    return {"context": ctx, "summary": context_summary(ctx)}
+
+
+# ── Arya conversational brain (text now; same logic powers voice) ───────
+class ChatReq(BaseModel):
+    patientId: str
+    messages: list[dict]  # [{role: "user"|"assistant", content: str}]
+
+
+@app.post("/arya/chat")
+def arya_chat_endpoint(req: ChatReq) -> dict:
+    result = arya_chat(req.patientId, req.messages)
+    return result
+
+
+# ── Appointment reschedule (voice + chat) ───────────────────────────────
+class RescheduleReq(BaseModel):
+    orgId: str = "demo-org"
+    patientId: str
+    newDay: str
+    newTime: str
+
+
+@app.post("/appointments/reschedule")
+def appointments_reschedule(req: RescheduleReq) -> dict:
+    appt = next(
+        (s for s in db().collection("appointments").stream()
+         if (s.to_dict() or {}).get("patientId") == req.patientId
+         and (s.to_dict() or {}).get("status") == "booked"),
+        None,
+    )
+    new_when = f"{req.newDay} {req.newTime}"
+    if appt is None:
+        raise HTTPException(404, "No booked appointment to reschedule.")
+    db().collection("appointments").document(appt.id).update({"scheduledAt": new_when})
+    audit("system", "reschedule_appointment", f"appointments/{appt.id}")
+    return {"rescheduled": True, "scheduledAt": new_when, "spoken": f"Done, I've moved your appointment to {new_when}."}
 
 
 # ── Glossary ────────────────────────────────────────────────────────────
