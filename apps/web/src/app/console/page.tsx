@@ -1,6 +1,7 @@
 'use client';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { RequireRole } from '@/components/RequireRole';
 
 const TRIAGE_STYLE: Record<string, string> = {
   emergency: 'bg-red-50 border-signal-red text-signal-red',
@@ -9,6 +10,14 @@ const TRIAGE_STYLE: Record<string, string> = {
 };
 
 export default function Console() {
+  return (
+    <RequireRole allow={['doctor', 'admin', 'frontdesk']}>
+      <ConsoleInner />
+    </RequireRole>
+  );
+}
+
+function ConsoleInner() {
   const { data: callsData } = useQuery({ queryKey: ['calls'], queryFn: () => api.calls() });
   const { data: alertsData } = useQuery({ queryKey: ['alerts'], queryFn: () => api.alerts() });
 

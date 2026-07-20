@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useVoiceRoom } from '@/lib/useVoiceRoom';
 import { Waveform } from '@/components/Waveform';
 import { LatencyCounter } from '@/components/LatencyCounter';
+import { RequireRole } from '@/components/RequireRole';
 
 // Demo transcript that streams in — shows the mid-call language switch and the
 // red-flag trigger. In production these turns arrive from the agent via the
@@ -20,6 +21,14 @@ const SCRIPT: { role: 'patient' | 'doctor'; text: string; lang: string }[] = [
 const ENCOUNTER_ID = 'enc-1';
 
 export default function Consult() {
+  return (
+    <RequireRole allow={['doctor', 'admin', 'frontdesk']}>
+      <ConsultInner />
+    </RequireRole>
+  );
+}
+
+function ConsultInner() {
   const { status, connect, disconnect } = useVoiceRoom('scribe');
   const [turns, setTurns] = useState<typeof SCRIPT>([]);
   const [gaps, setGaps] = useState<{ field: string; label: string }[]>([]);

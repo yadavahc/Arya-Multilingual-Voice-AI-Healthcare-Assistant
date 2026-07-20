@@ -13,10 +13,19 @@ import {
   YAxis,
 } from 'recharts';
 import { api } from '@/lib/api';
+import { RequireRole } from '@/components/RequireRole';
 
 const PIE = ['#1c7a76', '#43b3ac', '#78d0ca', '#aee5e0', '#d97706', '#dc2626'];
 
 export default function Admin() {
+  return (
+    <RequireRole allow={['doctor', 'admin']}>
+      <AdminInner />
+    </RequireRole>
+  );
+}
+
+function AdminInner() {
   const { data } = useQuery({ queryKey: ['analytics'], queryFn: () => api.analytics() });
 
   const langData = Object.entries(data?.languageDistribution || {}).map(([name, value]) => ({
