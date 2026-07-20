@@ -56,17 +56,29 @@ def prewarm(proc: JobProcess) -> None:
     logger.info("prewarm complete: Silero VAD loaded")
 
 
-def _role_from_metadata(ctx: JobContext) -> str:
-    """Room/participant metadata decides the agent persona.
+def _parse_metadata(ctx: JobContext) -> tuple[str, Optional[str]]:
+    """Return (role, patient_id) from job metadata.
 
-    Inbound triage line, ambient scribe, or outbound adherence call.
+    Metadata may be JSON ({"role","patientId"}) from the token/dispatch, or a
+    bare keyword string. Defaults to the care-companion persona for a patient
+    calling their doctor's line.
     """
-    meta = (ctx.job.metadata or "").lower()
-    if "scribe" in meta:
-        return "scribe"
-    if "adherence" in meta:
-        return "adherence"
-    return "triage"
+    import json
+
+    raw = ctx.job.metadata or ""
+    role, patient_id = "companion", None
+    try:
+        data = json.loads(raw)
+        role = (data.get("role") or "companion").lower()
+        patient_id = data.get("patientId")
+        return role, patient_id
+    except Exception:
+        pass
+    meta = raw.lower()
+    for r in ("scribe", "adherence", "triage", "companion"):
+        if r in meta:
+            return r, None
+    return "companion", None
 
 
 async def _prefetch_patient_context(
@@ -84,8 +96,10 @@ async def _prefetch_patient_context(
     if state.patient_id:
         try:
             async with httpx.AsyncClient(timeout=2.5) as client:
+                # Full context (history, meds, care plan, appointments) so Arya can
+                # hold a genuinely informed conversation from the first word.
                 resp = await client.get(
-                    f"{API_BASE_URL.rstrip('/')}/patients/{state.patient_id}/summary"
+                    f"{API_BASE_URL.rstrip('/')}/patients/{state.patient_id}/context"
                 )
                 if resp.status_code == 200:
                     summary = resp.json().get("summary", "")
@@ -98,10 +112,34 @@ async def _prefetch_patient_context(
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
-    role = _role_from_metadata(ctx)
+    role, meta_patient_id = _parse_metadata(ctx)
+
+    # For browser (and SIP) calls, the caller's access token carries
+    # {role, patientId} as participant metadata. Read it so Arya loads the right
+    # patient's context before greeting.
+    try:
+        import json as _json
+
+        participant = await ctx.wait_for_participant()
+        pmeta = _json.loads(participant.metadata or "{}")
+        if pmeta.get("patientId"):
+            meta_patient_id = pmeta["patientId"]
+        if pmeta.get("role"):
+            role = str(pmeta["role"]).lower()
+    except Exception:
+        pass
+
     session_id = ctx.room.name
     store = SessionStore()
     logger.info("session %s starting (role=%s, store=%s)", session_id, role, store.mode)
+
+    # Seed the session's patient id from metadata (caller-ID lookup on telephony,
+    # or the logged-in patient on a browser call) before prefetching context.
+    if meta_patient_id:
+        seed_state = store.load(session_id) or SessionState(session_id=session_id, role=role)
+        seed_state.patient_id = meta_patient_id
+        seed_state.role = role
+        store.save(seed_state)
 
     state, patient_summary = await _prefetch_patient_context(store, session_id, role)
 
@@ -114,18 +152,9 @@ async def entrypoint(ctx: JobContext) -> None:
     if glossary_block:
         instructions = f"{instructions}\n\n{glossary_block}"
 
-    # Native speech-to-speech. Server-side VAD with interruption support.
-    realtime = openai.realtime.RealtimeModel(
-        model=REALTIME_MODEL,
-        voice="marin",
-        turn_detection=openai.realtime.ServerVadOptions(
-            threshold=0.5,
-            prefix_padding_ms=300,
-            silence_duration_ms=500,
-            create_response=True,
-            interrupt_response=True,
-        ),
-    )
+    # Native speech-to-speech. The Realtime API uses server-side VAD with
+    # interruption support by default (no explicit turn_detection needed).
+    realtime = openai.realtime.RealtimeModel(model=REALTIME_MODEL, voice="marin")
 
     session_kwargs: dict = {"llm": realtime, "vad": ctx.proc.userdata.get("vad")}
     if _HAS_TURN_DETECTOR:

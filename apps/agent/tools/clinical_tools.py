@@ -106,9 +106,49 @@ def build_tools(*, org_id: str, patient_id: Optional[str], call_id: str) -> list
         )
         return data.get("spoken", "Thank you, I've noted that down.")
 
+    @function_tool
+    async def get_medication_schedule(ctx: RunContext) -> str:
+        """Get the patient's current medications, dose times, and adherence."""
+        if not patient_id:
+            return "I don't have your records handy right now."
+        data = await _get(f"/patients/{patient_id}/context", {})
+        summary = data.get("summary", "")
+        meds = [l for l in summary.splitlines() if l.startswith("Medication:")]
+        return " ".join(meds) or "I don't see any active medications on file."
+
+    @function_tool
+    async def get_care_instructions(ctx: RunContext, topic: str) -> str:
+        """Get diet, rest, follow-up, or red-flag guidance from the care plan.
+
+        Args:
+            topic: one of "diet", "rest", "followUp", "redFlags".
+        """
+        if not patient_id:
+            return "Let me connect you to the clinic for that."
+        data = await _get(f"/patients/{patient_id}/context", {})
+        care = (data.get("context", {}) or {}).get("carePlan") or {}
+        return care.get(topic) or "I don't have specific guidance recorded for that."
+
+    @function_tool
+    async def reschedule_appointment(ctx: RunContext, new_day: str, new_time: str) -> str:
+        """Reschedule the patient's existing appointment.
+
+        Args:
+            new_day: e.g. "Monday", "2026-07-22".
+            new_time: e.g. "morning", "10:00".
+        """
+        data = await _post(
+            "/appointments/reschedule",
+            {"orgId": org_id, "patientId": patient_id, "newDay": new_day, "newTime": new_time},
+        )
+        return data.get("spoken", "I've rescheduled your appointment.")
+
     return [
         book_appointment,
+        reschedule_appointment,
         send_payment_link,
         lookup_slot_availability,
         log_medication_taken,
+        get_medication_schedule,
+        get_care_instructions,
     ]

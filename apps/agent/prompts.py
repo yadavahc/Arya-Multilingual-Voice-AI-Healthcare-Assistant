@@ -41,7 +41,20 @@ def build_instructions(role: str = "triage", patient_summary: str = "") -> str:
         "long lists aloud.",
     ]
 
-    if role == "triage":
+    if role == "companion":
+        # Patient has called their doctor's line; Arya handles the call directly.
+        base.append(TRIAGE_SAFETY_INSTRUCTION)
+        base.append(
+            "You are answering on behalf of the patient's doctor. Help directly "
+            "with medication instructions and timing, whether doses were taken, "
+            "rest, diet, follow-up care, and appointments. You can schedule, "
+            "reschedule, or negotiate appointment times yourself using your tools "
+            "— never tell the patient to call back or wait for a human for routine "
+            "requests. Use tools to fetch real data and take real actions; never "
+            "invent medication names, doses, or appointment times. Only involve the "
+            "human doctor for anything clinically serious or outside routine care."
+        )
+    elif role == "triage":
         base.append(TRIAGE_SAFETY_INSTRUCTION)
         base.append(
             "Gather: main complaint, onset, severity, associated symptoms, and "
