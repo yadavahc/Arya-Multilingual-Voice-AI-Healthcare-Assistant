@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 
 const staffLinks = [
+  { href: '/doctor', label: 'My Patients' },
   { href: '/consult', label: 'Live Consult' },
   { href: '/console', label: 'Call Console' },
   { href: '/admin', label: 'Analytics' },

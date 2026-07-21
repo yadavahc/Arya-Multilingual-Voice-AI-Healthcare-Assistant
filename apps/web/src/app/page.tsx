@@ -60,16 +60,16 @@ export default function Landing() {
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-4">
             <Link
-              href="/login/patient"
+              href="/login"
               className="rounded-xl bg-teal-600 px-6 py-3 font-medium text-cream-50 shadow-lift transition-transform duration-200 hover:-translate-y-0.5"
             >
-              I’m a Patient
+              Sign in with Google
             </Link>
             <Link
-              href="/login/doctor"
+              href="/login"
               className="rounded-xl bg-white px-6 py-3 font-medium text-teal-800 shadow-card transition-transform duration-200 hover:-translate-y-0.5"
             >
-              I’m a Clinician
+              Get started
             </Link>
             <LatencyCounter />
           </div>

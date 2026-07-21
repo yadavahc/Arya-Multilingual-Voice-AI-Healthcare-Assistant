@@ -20,7 +20,7 @@ export function RequireRole({ allow, children }: { allow: Role[]; children: Reac
       return;
     }
     if (!allow.includes(user.role)) {
-      router.replace(user.role === 'patient' ? '/patient' : '/consult');
+      router.replace(user.role === 'patient' ? '/patient' : '/doctor');
       return;
     }
     setReady(true);

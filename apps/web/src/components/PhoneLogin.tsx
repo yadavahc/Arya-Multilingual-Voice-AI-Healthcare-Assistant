@@ -48,7 +48,7 @@ export function PhoneLogin({ portal }: { portal: Portal }) {
       // Code accepted — resolve role via our API (enforces portal separation).
       const identity = await api.resolveIdentity(toE164(phone), portal);
       setUser(identity);
-      router.push(identity.role === 'patient' ? '/patient' : '/consult');
+      router.push(identity.role === 'patient' ? '/patient' : '/doctor');
     } catch (e: any) {
       const msg = String(e?.message || '');
       if (msg.includes('403')) {

@@ -44,11 +44,65 @@ export const api = {
     }),
   patientContext: (patientId: string) =>
     j<{ context: any; summary: string }>(`/patients/${patientId}/context`),
-  aryaChat: (patientId: string, messages: ChatMessage[]) =>
+  aryaChat: (
+    patientId: string,
+    messages: ChatMessage[],
+    opts: { sessionId?: string; language?: string; channel?: string } = {},
+  ) =>
     j<AryaChatResp>('/arya/chat', {
       method: 'POST',
-      body: JSON.stringify({ patientId, messages }),
+      body: JSON.stringify({ patientId, messages, ...opts }),
     }),
+
+  // Google auth + onboarding
+  googleAuth: (email: string, displayName?: string) =>
+    j<{ needsOnboarding: boolean; profile: any }>('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ email, displayName }),
+    }),
+  completeProfile: (body: {
+    email: string;
+    role: 'doctor' | 'patient';
+    displayName: string;
+    phone: string;
+    hospitalId: string;
+    preferredLanguage?: string;
+  }) => j<{ needsOnboarding: boolean; profile: any }>('/profile/complete', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  hospitals: () => j<{ hospitals: any[] }>('/hospitals'),
+  doctors: (hospitalId: string) => j<{ doctors: any[] }>(`/doctors?hospitalId=${hospitalId}`),
+
+  // Calendar / appointments
+  slots: (doctorId: string, date: string) =>
+    j<{ doctorId: string; date: string; slots: string[] }>(
+      `/calendar/slots?doctorId=${doctorId}&date=${date}`,
+    ),
+  bookAppointment: (body: {
+    patientId: string;
+    doctorId: string;
+    date: string;
+    time: string;
+    reason?: string;
+  }) => j<{ booked: boolean; appointment: any }>('/appointments/book', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  appointments: (params: { doctorId?: string; patientId?: string }) => {
+    const q = new URLSearchParams(params as any).toString();
+    return j<{ appointments: any[] }>(`/appointments?${q}`);
+  },
+
+  // Doctor views
+  doctorPatients: (doctorId: string) =>
+    j<{ patients: any[] }>(`/doctors/${doctorId}/patients`),
+  patientDetail: (patientId: string) =>
+    j<{ context: any; conversations: any[]; appointments: any[] }>(
+      `/patients/${patientId}/detail`,
+    ),
+  conversations: (patientId: string) =>
+    j<{ conversations: any[] }>(`/conversations?patientId=${patientId}`),
 };
 
 export interface ResolvedIdentity {
@@ -56,6 +110,9 @@ export interface ResolvedIdentity {
   role: 'doctor' | 'patient' | 'admin' | 'frontdesk';
   orgId: string;
   displayName: string;
+  hospitalId?: string;
+  email?: string;
+  phone?: string;
   patientId?: string | null;
   preferredLanguage: string;
   isNew?: boolean;
