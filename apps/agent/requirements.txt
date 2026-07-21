@@ -2,6 +2,8 @@
 livekit-agents[openai,silero,turn-detector]~=1.0
 livekit-plugins-openai~=1.0
 livekit-plugins-silero~=1.0
+# Sarvam AI — Indian-language STT + TTS (Hindi, Kannada, Tamil, English)
+livekit-plugins-sarvam~=1.0
 # Fallback pipeline (optional)
 livekit-plugins-deepgram~=1.0
 livekit-plugins-cartesia~=1.0

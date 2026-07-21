@@ -8,11 +8,12 @@ pushed into a summarized cached block injected at session start, NOT here.
 # separate language-detection pass. The model detects language from audio and
 # mirrors it — including code-switch — in the same speech-to-speech turn.
 LANGUAGE_INSTRUCTION = (
-    "Detect the language of each user utterance from the audio itself and respond "
-    "in that exact same language, including dialect and register. If the user "
-    "code-switches mid-sentence (e.g. Hinglish, Tanglish), mirror their mix "
-    "naturally. Never announce that you switched languages. Never ask the user "
-    "which language they prefer — just follow them."
+    "You fluently speak English, Hindi, Kannada, and Tamil. Detect the language of "
+    "each user utterance from the audio itself and respond in that exact same "
+    "language, including dialect and register. If the user code-switches "
+    "mid-sentence (Hinglish / Tanglish / Kanglish), mirror their mix naturally. "
+    "Never announce that you switched languages. Never ask the user which language "
+    "they prefer — just follow them."
 )
 
 TRIAGE_SAFETY_INSTRUCTION = (

@@ -50,10 +50,51 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8080")
 REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime")
 
 
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+
+# Sarvam language codes for the 4 supported languages.
+_SARVAM_LANG = {"en": "en-IN", "hi": "hi-IN", "kn": "kn-IN", "ta": "ta-IN"}
+
+
 def prewarm(proc: JobProcess) -> None:
     """Load heavy models once per worker process so call pickup has no cold start."""
     proc.userdata["vad"] = silero.VAD.load()
     logger.info("prewarm complete: Silero VAD loaded")
+
+
+def _build_session(ctx: JobContext, detected_language: str) -> AgentSession:
+    """Build the voice session. Sarvam pipeline for Indian languages if keyed,
+    else OpenAI Realtime speech-to-speech."""
+    vad = ctx.proc.userdata.get("vad")
+
+    if SARVAM_API_KEY:
+        try:
+            from livekit.plugins import sarvam
+
+            # Saarika STT with auto language detection across en/hi/kn/ta.
+            stt = sarvam.STT(language="unknown", model="saarika:v2.5")
+            # Bulbul TTS — natural Indian-language voice; starts in the caller's lang.
+            # anushka requires bulbul:v2 (v3 uses a different speaker set).
+            tts = sarvam.TTS(
+                target_language_code=_SARVAM_LANG.get(detected_language, "hi-IN"),
+                speaker="anushka",
+                model="bulbul:v2",
+            )
+            llm = openai.LLM(model=os.getenv("OPENAI_NOTES_MODEL", "gpt-4.1-mini"))
+            kwargs: dict = {"stt": stt, "llm": llm, "tts": tts, "vad": vad}
+            if _HAS_TURN_DETECTOR:
+                kwargs["turn_detection"] = MultilingualModel()
+            logger.info("voice pipeline: Sarvam STT+TTS (Indian languages)")
+            return AgentSession(**kwargs)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Sarvam pipeline unavailable (%s); using OpenAI Realtime", exc)
+
+    realtime = openai.realtime.RealtimeModel(model=REALTIME_MODEL, voice="marin")
+    kwargs = {"llm": realtime, "vad": vad}
+    if _HAS_TURN_DETECTOR:
+        kwargs["turn_detection"] = MultilingualModel()
+    logger.info("voice pipeline: OpenAI Realtime (speech-to-speech)")
+    return AgentSession(**kwargs)
 
 
 def _parse_metadata(ctx: JobContext) -> tuple[str, Optional[str]]:
@@ -152,15 +193,10 @@ async def entrypoint(ctx: JobContext) -> None:
     if glossary_block:
         instructions = f"{instructions}\n\n{glossary_block}"
 
-    # Native speech-to-speech. The Realtime API uses server-side VAD with
-    # interruption support by default (no explicit turn_detection needed).
-    realtime = openai.realtime.RealtimeModel(model=REALTIME_MODEL, voice="marin")
-
-    session_kwargs: dict = {"llm": realtime, "vad": ctx.proc.userdata.get("vad")}
-    if _HAS_TURN_DETECTOR:
-        session_kwargs["turn_detection"] = MultilingualModel()
-
-    session = AgentSession(**session_kwargs)
+    # Pick the voice pipeline. Sarvam (STT→LLM→TTS) gives natural Hindi / Kannada /
+    # Tamil voices; it's preferred for Indian languages. If no Sarvam key, fall
+    # back to OpenAI Realtime (native speech-to-speech, strong English/Hindi).
+    session = _build_session(ctx, state.detected_language)
 
     tools = build_tools(
         org_id=state.org_id or "demo-org",
