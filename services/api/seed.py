@@ -1,5 +1,6 @@
-"""Seed demo data so the app is populated on first run (dashboards, notes, and
-enough patient history for Arya to hold a real, context-aware conversation)."""
+"""Seed demo data: a hospital with a connected doctor + patient, a realistic
+prescription, the doctor's calendar/availability, and conversation history — so
+Arya has real context and the doctor can track what was discussed."""
 from __future__ import annotations
 
 import time
@@ -7,9 +8,12 @@ import time
 from firestore_client import db
 
 DEMO_ORG = "demo-org"
+HOSPITAL_ID = "hosp-oxford"
 
-# Phone → identity is how login maps a Firebase user to a role. Keep these in
-# E.164 so they match Firebase phone-auth uids downstream.
+# Real accounts used for Google sign-in (mapped to roles + the same hospital).
+PATIENT_EMAIL = "yadavahc333@gmail.com"
+DOCTOR_EMAIL = "yadavaoxford@gmail.com"
+PATIENT_PHONE = "+918904030441"
 DOCTOR_PHONE = "+919481479268"
 
 
@@ -22,49 +26,70 @@ def _date(offset_days: int = 0) -> str:
 
 
 def seed() -> dict:
-    database = db()
+    d = db()
 
-    database.collection("organizations").document(DEMO_ORG).set(
-        {"id": DEMO_ORG, "name": "Arya Demo Clinic", "plan": "clinic", "region": "asia-south1", "createdAt": _now_iso(-1000)}
+    # ── Hospital / organization ─────────────────────────────────────────
+    d.collection("organizations").document(DEMO_ORG).set(
+        {"id": DEMO_ORG, "name": "Arya Health Network", "plan": "clinic", "region": "asia-south1", "createdAt": _now_iso(-9000)}
+    )
+    d.collection("hospitals").document(HOSPITAL_ID).set(
+        {"id": HOSPITAL_ID, "orgId": DEMO_ORG, "name": "Oxford Health Multispeciality, Bengaluru",
+         "city": "Bengaluru", "departments": ["Cardiology", "General Medicine", "Endocrinology"],
+         "createdAt": _now_iso(-9000)}
+    )
+    d.collection("hospitals").document("hosp-city").set(
+        {"id": "hosp-city", "orgId": DEMO_ORG, "name": "City Care Hospital, Mysuru",
+         "city": "Mysuru", "departments": ["General Medicine", "Pediatrics"], "createdAt": _now_iso(-9000)}
     )
 
-    # ── Doctor user (doctor login portal) ───────────────────────────────
-    database.collection("users").document("doc-1").set(
-        {"uid": "doc-1", "role": "doctor", "orgId": DEMO_ORG, "displayName": "Dr. Meera Nair",
-         "phone": DOCTOR_PHONE, "preferredLanguage": "en", "specialty": "Cardiology", "createdAt": _now_iso(-1000)}
+    # ── Doctor (Google account: yadavaoxford@gmail.com) ─────────────────
+    d.collection("users").document("doc-1").set(
+        {"uid": "doc-1", "role": "doctor", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID,
+         "displayName": "Dr. Aisha Rao", "email": DOCTOR_EMAIL, "phone": DOCTOR_PHONE,
+         "specialty": "Cardiology", "preferredLanguage": "en",
+         # Calendar/availability: working days/hours + slot length drive open slots.
+         "availability": {"days": [0, 1, 2, 3, 4, 5], "start": "09:00", "end": "17:00", "slotMinutes": 30,
+                          "lunch": {"start": "13:00", "end": "14:00"}},
+         "createdAt": _now_iso(-9000)}
     )
 
-    # ── Patients (also usable as patient-login identities via phone) ─────
-    patients = [
-        {"id": "pat-1", "name": "Ramesh Kumar", "phone": "+918904030441", "preferredLanguage": "hi",
-         "sex": "male", "dob": "1958-04-12", "allergies": ["penicillin"], "meds": ["Amlodipine 5mg", "Atorvastatin 10mg"],
-         "conditions": ["Hypertension", "Hyperlipidemia"]},
-        {"id": "pat-2", "name": "Lakshmi Iyer", "phone": "+919000000011", "preferredLanguage": "ta",
-         "sex": "female", "dob": "1971-09-30", "allergies": [], "meds": ["Levothyroxine 50mcg"],
-         "conditions": ["Hypothyroidism"]},
-        {"id": "pat-3", "name": "Anjali Das", "phone": "+919000000012", "preferredLanguage": "bn",
-         "sex": "female", "dob": "1965-01-22", "allergies": ["sulfa"], "meds": ["Metformin 500mg"],
-         "conditions": ["Type 2 Diabetes"]},
-    ]
-    for p in patients:
-        database.collection("patients").document(p["id"]).set({**p, "orgId": DEMO_ORG, "createdAt": _now_iso(-5000)})
-        # Mirror a patient user record so auth/resolve finds them by phone.
-        database.collection("users").document(f"user-{p['id']}").set(
-            {"uid": f"user-{p['id']}", "role": "patient", "orgId": DEMO_ORG, "patientId": p["id"],
-             "displayName": p["name"], "phone": p["phone"], "preferredLanguage": p["preferredLanguage"],
-             "createdAt": _now_iso(-5000)}
-        )
+    # ── Patient (Google account: yadavahc333@gmail.com) ─────────────────
+    d.collection("patients").document("pat-1").set(
+        {"id": "pat-1", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID, "primaryDoctorId": "doc-1",
+         "name": "Ramesh Kumar", "email": PATIENT_EMAIL, "phone": PATIENT_PHONE,
+         "sex": "male", "dob": "1958-04-12", "bloodGroup": "B+",
+         "conditions": ["Hypertension", "Hyperlipidemia", "Type 2 Diabetes"],
+         "allergies": ["Penicillin"], "preferredLanguage": "hi",
+         "vitals": {"bp": "150/95", "pulse": 82, "weightKg": 78, "heightCm": 168, "hba1c": 7.8},
+         "createdAt": _now_iso(-9000)}
+    )
+    d.collection("users").document("user-pat-1").set(
+        {"uid": "user-pat-1", "role": "patient", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID,
+         "patientId": "pat-1", "displayName": "Ramesh Kumar", "email": PATIENT_EMAIL,
+         "phone": PATIENT_PHONE, "preferredLanguage": "hi", "createdAt": _now_iso(-9000)}
+    )
 
-    # ── Prescriptions with dose schedules (drives adherence + Arya answers) ─
-    database.collection("prescriptions").document("rx-1").set(
-        {"id": "rx-1", "encounterId": "enc-1", "patientId": "pat-1", "orgId": DEMO_ORG,
+    # ── Realistic prescription ──────────────────────────────────────────
+    d.collection("prescriptions").document("rx-1").set(
+        {"id": "rx-1", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID, "patientId": "pat-1",
+         "doctorId": "doc-1", "doctorName": "Dr. Aisha Rao", "encounterId": "enc-1",
+         "diagnosis": "Essential hypertension with dyslipidemia; Type 2 diabetes mellitus.",
+         "issuedAt": _date(-1),
          "drugs": [
-             {"name": "Amlodipine", "dose": "5mg", "frequency": "once daily", "durationDays": 30, "instructions": "Take in the morning for blood pressure."},
-             {"name": "Atorvastatin", "dose": "10mg", "frequency": "once at night", "durationDays": 30, "instructions": "Take at night for cholesterol."},
+             {"name": "Amlodipine", "strength": "5 mg", "form": "Tablet", "frequency": "Once daily",
+              "timing": "Morning, after breakfast", "durationDays": 30, "instructions": "For blood pressure. Do not stop suddenly."},
+             {"name": "Atorvastatin", "strength": "10 mg", "form": "Tablet", "frequency": "Once daily",
+              "timing": "Night, after dinner", "durationDays": 30, "instructions": "For cholesterol."},
+             {"name": "Metformin", "strength": "500 mg", "form": "Tablet", "frequency": "Twice daily",
+              "timing": "After breakfast and after dinner", "durationDays": 30, "instructions": "For blood sugar. Take with food."},
          ],
+         "advice": "Low-salt, low-sugar diet. 30 minutes walking daily. Home BP monitoring.",
+         "followUp": _date(13),
          "schedule": [
-             {"timeOfDay": "morning", "hhmm": "08:00", "withFood": True, "drug": "Amlodipine 5mg"},
-             {"timeOfDay": "night", "hhmm": "21:00", "withFood": False, "drug": "Atorvastatin 10mg"},
+             {"timeOfDay": "morning", "hhmm": "08:00", "withFood": True, "drug": "Amlodipine 5 mg"},
+             {"timeOfDay": "morning", "hhmm": "08:00", "withFood": True, "drug": "Metformin 500 mg"},
+             {"timeOfDay": "night", "hhmm": "21:00", "withFood": True, "drug": "Atorvastatin 10 mg"},
+             {"timeOfDay": "night", "hhmm": "21:00", "withFood": True, "drug": "Metformin 500 mg"},
          ],
          "adherenceLog": [
              {"slotHHMM": "08:00", "scheduledAt": _now_iso(-1440), "status": "taken", "confirmedVia": "voice"},
@@ -73,65 +98,70 @@ def seed() -> dict:
          "createdAt": _now_iso(-1440)}
     )
 
-    # ── Care plan (rest / diet / follow-up guidance Arya can quote) ──────
-    database.collection("careplans").document("care-pat-1").set(
+    # ── Care plan (diet/rest/follow-up/red-flags Arya can quote) ─────────
+    d.collection("careplans").document("care-pat-1").set(
         {"id": "care-pat-1", "patientId": "pat-1", "orgId": DEMO_ORG,
-         "diet": "Low-salt DASH diet. Avoid pickles, papad, and fried food. Prefer fruits, vegetables, and whole grains.",
-         "rest": "Sleep 7-8 hours. Light walking 30 minutes daily; avoid heavy exertion until BP is controlled.",
-         "followUp": "Blood pressure re-check in 2 weeks. Lipid profile in 6 weeks.",
-         "redFlags": "Chest pain, breathlessness, or severe headache — go to emergency immediately.",
+         "diet": "Low-salt DASH diet. Avoid pickles, papad, fried and processed food. For diabetes, avoid sugar, sweets, and white rice in excess. Prefer millets, vegetables, dal, and fruit in moderation.",
+         "rest": "Sleep 7-8 hours. Walk 30 minutes daily at an easy pace. Avoid heavy lifting and strenuous exertion until BP is controlled.",
+         "followUp": f"Blood pressure and blood sugar re-check on {_date(13)}. Bring your home BP readings and this prescription.",
+         "redFlags": "Chest pain, breathlessness, severe headache, sudden weakness or slurred speech, or fasting sugar above 300 — go to emergency or call immediately.",
          "updatedAt": _now_iso(-1440)}
     )
 
-    # ── Previous consultations (history Arya reasons over) ──────────────
-    database.collection("encounters").document("enc-1").set(
-        {"id": "enc-1", "orgId": DEMO_ORG, "doctorId": "doc-1", "patientId": "pat-1",
+    # ── Past consultations (history + doctor-visible transcript) ────────
+    d.collection("encounters").document("enc-1").set(
+        {"id": "enc-1", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID, "doctorId": "doc-1", "patientId": "pat-1",
          "startedAt": _now_iso(-1440), "endedAt": _now_iso(-1425), "status": "completed",
          "encounterType": "chest_pain", "detectedLanguages": ["hi", "hi-en", "en"],
-         "summary": "Reviewed hypertension. BP 150/95. Started Amlodipine. Reported mild chest tightness on exertion.",
+         "summary": "Reviewed hypertension and diabetes. BP 150/95, HbA1c 7.8. Continued Amlodipine, added Metformin. Mild exertional chest tightness — advised monitoring and follow-up.",
          "transcript": [
-             {"role": "patient", "text": "Doctor sahab, seene mein dard ho raha hai", "language": "hi", "at": int(time.time() * 1000)},
-             {"role": "doctor", "text": "Kab se ho raha hai? Does it radiate to your arm?", "language": "hi-en", "at": int(time.time() * 1000)},
-             {"role": "patient", "text": "Since morning. Yes, it goes to my left arm", "language": "en", "at": int(time.time() * 1000)},
+             {"role": "patient", "text": "Doctor sahab, seene mein halka dard rehta hai", "language": "hi", "at": int(time.time() * 1000)},
+             {"role": "doctor", "text": "Kab hota hai? On walking or at rest?", "language": "hi-en", "at": int(time.time() * 1000)},
+             {"role": "patient", "text": "Walking ke time. Rest karne pe theek ho jata hai", "language": "hi", "at": int(time.time() * 1000)},
          ]}
     )
-    database.collection("encounters").document("enc-0").set(
-        {"id": "enc-0", "orgId": DEMO_ORG, "doctorId": "doc-1", "patientId": "pat-1",
-         "startedAt": _now_iso(-43200), "endedAt": _now_iso(-43185), "status": "completed",
-         "encounterType": "general", "detectedLanguages": ["hi"],
-         "summary": "Routine check. Diagnosed hypertension. Advised low-salt diet and lifestyle changes.",
-         "transcript": []}
+
+    # ── Doctor's calendar: existing booked appointments ─────────────────
+    d.collection("appointments").document("appt-1").set(
+        {"id": "appt-1", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID, "patientId": "pat-1",
+         "patientName": "Ramesh Kumar", "doctorId": "doc-1", "date": _date(13), "time": "10:30",
+         "status": "booked", "reason": "BP & sugar re-check", "createdAt": _now_iso(-1440)}
+    )
+    # A couple of already-taken slots so "available slots" looks real.
+    for i, (dt, tm) in enumerate([(_date(1), "10:00"), (_date(1), "11:30"), (_date(2), "09:30")]):
+        d.collection("appointments").document(f"appt-x{i}").set(
+            {"id": f"appt-x{i}", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID, "patientId": "pat-2",
+             "patientName": "Other Patient", "doctorId": "doc-1", "date": dt, "time": tm,
+             "status": "booked", "reason": "Consultation", "createdAt": _now_iso(-200)}
+        )
+
+    # ── Conversations (chat/voice, saved for the doctor to review) ──────
+    d.collection("conversations").document("conv-seed").set(
+        {"id": "conv-seed", "orgId": DEMO_ORG, "patientId": "pat-1", "doctorId": "doc-1",
+         "channel": "voice", "language": "hi", "startedAt": _now_iso(-600),
+         "summary": "Patient asked about BP medicine timing and diet; Arya confirmed schedule and advised low-salt food.",
+         "turns": [
+             {"role": "patient", "text": "Meri BP ki dawai kab leni hai?", "at": int(time.time() * 1000) - 600000},
+             {"role": "arya", "text": "Amlodipine subah 8 baje breakfast ke baad leni hai.", "at": int(time.time() * 1000) - 590000},
+         ]}
     )
 
-    # ── Appointments (Arya can schedule / reschedule against these) ─────
-    database.collection("appointments").document("appt-1").set(
-        {"id": "appt-1", "orgId": DEMO_ORG, "patientId": "pat-1", "doctorId": "doc-1",
-         "scheduledAt": f"{_date(14)} 10:30", "status": "booked", "reason": "BP re-check", "createdAt": _now_iso(-1440)}
-    )
-
-    # ── Glossary — locked medical-term translations ─────────────────────
+    # ── Glossary — locked medical terms in the 4 supported languages ────
     glossary = {
-        "hypertension": {"hi": "उच्च रक्तचाप", "ta": "உயர் இரத்த அழுத்தம்", "bn": "উচ্চ রক্তচাপ"},
-        "diabetes": {"hi": "मधुमेह", "ta": "நீரிழிவு", "bn": "ডায়াবেটিস"},
-        "chest pain": {"hi": "सीने में दर्द", "ta": "மார்பு வலி", "bn": "বুকে ব্যথা"},
-        "fever": {"hi": "बुखार", "ta": "காய்ச்சல்", "bn": "জ্বর"},
-        "blood pressure": {"hi": "रक्तचाप", "ta": "இரத்த அழுத்தம்", "bn": "রক্তচাপ"},
+        "hypertension": {"hi": "उच्च रक्तचाप", "kn": "ಅಧಿಕ ರಕ್ತದೊತ್ತಡ", "ta": "உயர் இரத்த அழுத்தம்"},
+        "diabetes": {"hi": "मधुमेह", "kn": "ಮಧುಮೇಹ", "ta": "நீரிழிவு"},
+        "chest pain": {"hi": "सीने में दर्द", "kn": "ಎದೆ ನೋವು", "ta": "மார்பு வலி"},
+        "blood pressure": {"hi": "रक्तचाप", "kn": "ರಕ್ತದೊತ್ತಡ", "ta": "இரத்த அழுத்தம்"},
+        "blood sugar": {"hi": "रक्त शर्करा", "kn": "ರಕ್ತದ ಸಕ್ಕರೆ", "ta": "இரத்த சர்க்கரை"},
+        "medicine": {"hi": "दवाई", "kn": "ಔಷಧಿ", "ta": "மருந்து"},
     }
-    for term, translations in glossary.items():
-        database.collection("glossary").document(term).set({"term": term, "translations": translations})
+    for term, tr in glossary.items():
+        d.collection("glossary").document(term).set({"term": term, "translations": tr})
 
     # ── Calls + alerts for console/analytics ────────────────────────────
-    calls = [
-        {"id": "call-1", "direction": "inbound", "fromNumber": "+919000000010", "toNumber": "+911140000000", "triageLevel": "emergency", "patientId": "pat-1", "latencyMetrics": {"p50": 640, "p95": 910, "samples": 12}},
-        {"id": "call-2", "direction": "inbound", "fromNumber": "+919000000011", "toNumber": "+911140000000", "triageLevel": "routine", "patientId": "pat-2", "latencyMetrics": {"p50": 580, "p95": 820, "samples": 9}},
-        {"id": "call-3", "direction": "outbound", "fromNumber": "+911140000000", "toNumber": "+919000000012", "triageLevel": "routine", "patientId": "pat-3", "latencyMetrics": {"p50": 610, "p95": 870, "samples": 7}},
-    ]
-    for call in calls:
-        database.collection("calls").document(call["id"]).set({**call, "orgId": DEMO_ORG, "startedAt": _now_iso(-30)})
+    for c in [
+        {"id": "call-1", "direction": "inbound", "fromNumber": PATIENT_PHONE, "toNumber": "+918040000000", "triageLevel": "routine", "patientId": "pat-1", "latencyMetrics": {"p50": 620, "p95": 880, "samples": 10}},
+    ]:
+        d.collection("calls").document(c["id"]).set({**c, "orgId": DEMO_ORG, "startedAt": _now_iso(-30)})
 
-    database.collection("alerts").document("alert-1").set(
-        {"id": "alert-1", "orgId": DEMO_ORG, "severity": "critical", "kind": "red_flag", "title": "Cardiac red flag",
-         "body": "Patient Ramesh Kumar reported chest pain radiating to left arm.", "encounterRef": "enc-1", "callRef": "call-1", "createdAt": _now_iso(-30)}
-    )
-
-    return {"seeded": True, "org": DEMO_ORG, "patients": len(patients), "calls": len(calls)}
+    return {"seeded": True, "hospital": HOSPITAL_ID, "doctor": DOCTOR_EMAIL, "patient": PATIENT_EMAIL}
