@@ -78,26 +78,58 @@ def context_summary(ctx: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_LANG_NAMES = {"en": "English", "hi": "Hindi", "kn": "Kannada", "ta": "Tamil"}
+
+
+def detect_message_language(text: str) -> str:
+    """Detect language from script so we can force the reply language."""
+    for ch in text:
+        cp = ord(ch)
+        if 0x0C80 <= cp <= 0x0CFF:
+            return "kn"
+        if 0x0B80 <= cp <= 0x0BFF:
+            return "ta"
+        if 0x0900 <= cp <= 0x097F:
+            return "hi"
+    # Latin text: could be English or romanized Hindi; treat as English unless
+    # obvious Hindi romanization markers appear.
+    low = text.lower()
+    if any(w in low for w in (" hai", " kya", " dawai", " kab", " nahi", "mujhe", "aap")):
+        return "hi"
+    return "en"
+
+
 def companion_system_prompt(ctx: dict[str, Any]) -> str:
     lang = ctx.get("patient", {}).get("preferredLanguage", "en")
     return (
         "You are Arya, a warm, careful multilingual healthcare voice companion "
         "answering on behalf of the patient's doctor. The patient has called the "
-        "clinic; you handle the call directly, only escalating to the human doctor "
-        "for anything clinically serious or outside routine care.\n\n"
-        f"Reply in the patient's language (preferred: '{lang}'), mirroring how they "
-        "speak (including Hinglish/Tanglish code-switching). Keep replies short and "
-        "natural, one or two sentences, as if speaking on a phone call.\n\n"
-        "You can and should help with: medication instructions and timing, whether "
-        "doses were taken, rest, diet, follow-up care, and next appointments. You "
-        "can schedule, reschedule, or negotiate appointment times yourself using "
-        "your tools — do not tell the patient to call back or wait for a human for "
-        "routine requests. Use the tools to fetch real data and take real actions; "
-        "never invent medication names, doses, or appointment times.\n\n"
-        "If the patient describes an emergency (crushing/radiating chest pain, "
-        "stroke signs, severe breathlessness, heavy bleeding, or self-harm), stop "
-        "and calmly tell them to seek emergency care immediately and that the "
-        "doctor is being alerted.\n\n"
+        "clinic; you handle the call directly, escalating to the human doctor for "
+        "anything clinically serious or outside routine care.\n\n"
+        "LANGUAGES: You fluently speak English, Hindi, Kannada, and Tamil. ALWAYS "
+        "reply in the SAME language the patient used in their latest message — if "
+        "they write in English, reply in English; in Hindi, reply in Hindi; and so "
+        "on. Mirror code-switching (Hinglish/Tanglish/Kanglish) too. Only if it's "
+        f"ambiguous, default to their preferred language ('{lang}'). Keep replies "
+        "short and natural — one or two sentences, as if on a phone call.\n\n"
+        "MEDICAL ACCURACY (critical — this is health advice):\n"
+        "- Only state medication names, doses, timings, diet, and appointment "
+        "details that come from the patient's actual records via your tools. NEVER "
+        "invent or guess a drug, dose, frequency, or date. If a detail isn't in the "
+        "records, say you'll have the doctor confirm it.\n"
+        "- Do not diagnose new conditions, change prescribed doses, or recommend new "
+        "medicines. You reinforce the doctor's existing plan; you do not create one.\n"
+        "- For anything beyond the recorded plan, or if the patient sounds unwell, "
+        "advise them to consult the doctor and offer to book an appointment.\n\n"
+        "YOU CAN help with: medication instructions and timing, whether doses were "
+        "taken, rest, diet, follow-up care, and appointments. You can check the "
+        "doctor's live calendar and book, reschedule, or negotiate a real slot "
+        "yourself with your tools — offer concrete available times, confirm before "
+        "booking, and never promise a slot you haven't verified is free.\n\n"
+        "EMERGENCY: If the patient describes crushing/radiating chest pain, stroke "
+        "signs (face droop, arm weakness, slurred speech), severe breathlessness, "
+        "heavy bleeding, or self-harm — stop, calmly tell them to seek emergency "
+        "care immediately, and say the doctor is being alerted.\n\n"
         "Known patient context (do not read aloud; use to personalize):\n"
         + context_summary(ctx)
     )
@@ -192,35 +224,73 @@ def execute_tool(name: str, args: dict, patient_id: str, ctx: dict) -> dict:
             return {"next": None}
         return {"next": appts[0].get("scheduledAt"), "reason": appts[0].get("reason", "")}
 
+    doctor_id = ctx.get("patient", {}).get("primaryDoctorId") or "doc-1"
+
     if name == "get_available_slots":
-        # Propose three plausible slots (a real impl checks the doctor's calendar).
-        base = time.time() + 2 * 86400
-        slots = [time.strftime("%Y-%m-%d", time.gmtime(base + i * 86400)) + t
-                 for i, t in enumerate([" 10:00", " 15:30", " 11:15"])]
-        return {"slots": slots}
+        from calendar_slots import available_slots, next_available
+        day = args.get("preferred_day", "")
+        # Try to resolve a concrete date; otherwise return the next open day.
+        date = _resolve_day(day)
+        if date:
+            slots = available_slots(doctor_id, date)
+            if slots:
+                return {"date": date, "slots": slots[:6]}
+        nxt = next_available(doctor_id)
+        return {"date": nxt["date"], "slots": nxt["slots"], "note": "nearest available"}
 
     if name == "book_appointment":
+        from calendar_slots import available_slots
+        date = _resolve_day(args.get("day", "")) or args.get("day")
+        tm = args.get("time")
+        if date and tm and tm not in available_slots(doctor_id, date):
+            return {"booked": False, "reason": "slot_taken", "message": "That time is not free; please offer another."}
         appt_id = f"appt-{int(time.time()*1000)}"
-        scheduled = f"{args.get('day')} {args.get('time')}"
-        database.collection("appointments").document(appt_id).set(
-            {"id": appt_id, "orgId": ctx.get("patient", {}).get("orgId", "demo-org"),
-             "patientId": patient_id, "doctorId": "doc-1", "scheduledAt": scheduled,
-             "status": "booked", "reason": args.get("reason", "Follow-up"), "createdAt": _iso()}
-        )
+        appt = {"id": appt_id, "orgId": ctx.get("patient", {}).get("orgId", "demo-org"),
+                "hospitalId": ctx.get("patient", {}).get("hospitalId"),
+                "patientId": patient_id, "patientName": ctx.get("patient", {}).get("name", "Patient"),
+                "doctorId": doctor_id, "date": date, "time": tm, "status": "booked",
+                "reason": args.get("reason", "Follow-up"), "createdAt": _iso()}
+        database.collection("appointments").document(appt_id).set(appt)
         audit("patient", "book_appointment", f"appointments/{appt_id}")
-        return {"booked": True, "scheduledAt": scheduled}
+        return {"booked": True, "date": date, "time": tm}
 
     if name == "reschedule_appointment":
+        from calendar_slots import available_slots
         appts = ctx.get("appointments", [])
-        new_when = f"{args.get('new_day')} {args.get('new_time')}"
-        if appts:
-            appt_id = appts[0].get("id")
-            database.collection("appointments").document(appt_id).update({"scheduledAt": new_when, "status": "booked"})
-            audit("patient", "reschedule_appointment", f"appointments/{appt_id}")
-            return {"rescheduled": True, "scheduledAt": new_when}
-        return {"rescheduled": False, "reason": "no existing appointment"}
+        date = _resolve_day(args.get("new_day", "")) or args.get("new_day")
+        tm = args.get("new_time")
+        if not appts:
+            return {"rescheduled": False, "reason": "no existing appointment"}
+        if date and tm and tm not in available_slots(doctor_id, date):
+            return {"rescheduled": False, "reason": "slot_taken", "message": "That time is not free; offer another."}
+        appt_id = appts[0].get("id")
+        database.collection("appointments").document(appt_id).update({"date": date, "time": tm, "status": "booked"})
+        audit("patient", "reschedule_appointment", f"appointments/{appt_id}")
+        return {"rescheduled": True, "date": date, "time": tm}
 
     return {"error": f"unknown tool {name}"}
+
+
+def _resolve_day(text: str) -> str | None:
+    """Resolve a natural day reference to YYYY-MM-DD (best-effort)."""
+    import re
+    from datetime import datetime, timedelta
+
+    t = (text or "").strip().lower()
+    if re.match(r"^\d{4}-\d{2}-\d{2}", t):
+        return t[:10]
+    today = datetime.now()
+    if "today" in t:
+        return today.strftime("%Y-%m-%d")
+    if "tomorrow" in t:
+        return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    for i, wd in enumerate(weekdays):
+        if wd in t:
+            delta = (i - today.weekday()) % 7
+            delta = delta or 7  # next occurrence
+            return (today + timedelta(days=delta)).strftime("%Y-%m-%d")
+    return None
 
 
 # ── Chat loop ───────────────────────────────────────────────────────────
@@ -240,7 +310,15 @@ def chat(patient_id: str, messages: list[dict], max_tool_rounds: int = 4) -> dic
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
-    convo = [{"role": "system", "content": companion_system_prompt(ctx)}] + messages
+    # Force the reply language to match the patient's latest message.
+    last_user = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
+    reply_lang = detect_message_language(last_user)
+    lang_directive = {
+        "role": "system",
+        "content": f"The patient's latest message is in {_LANG_NAMES[reply_lang]}. "
+        f"You MUST write your entire reply in {_LANG_NAMES[reply_lang]} only.",
+    }
+    convo = [{"role": "system", "content": companion_system_prompt(ctx)}, lang_directive] + messages
     actions: list[dict] = []
 
     for _ in range(max_tool_rounds):
