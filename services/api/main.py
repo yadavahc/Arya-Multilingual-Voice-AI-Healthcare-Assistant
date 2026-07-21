@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -272,8 +272,38 @@ def appointments_book(req: BookReq) -> dict:
             "doctorId": req.doctorId, "date": req.date, "time": req.time, "status": "booked",
             "reason": req.reason, "createdAt": _now_iso()}
     db().collection("appointments").document(appt_id).set(appt)
+    _notify_booking(appt)
     audit("patient", "book_appointment", f"appointments/{appt_id}")
     return {"booked": True, "appointment": appt}
+
+
+def _notify_booking(appt: dict) -> None:
+    """Alert the assigned doctor and email the patient a confirmation."""
+    from integrations import send_email
+
+    dsnap = db().collection("users").document(appt.get("doctorId", "")).get()
+    doctor = dsnap.to_dict() if dsnap.exists else {}
+    psnap = db().collection("patients").document(appt.get("patientId", "")).get()
+    patient = psnap.to_dict() if psnap.exists else {}
+
+    alert_id = f"alert-{int(time.time()*1000)}"
+    db().collection("alerts").document(alert_id).set(
+        {"id": alert_id, "orgId": appt.get("orgId", "demo-org"), "severity": "info",
+         "kind": "appointment", "title": "New appointment booked",
+         "body": f"{appt.get('patientName','A patient')} booked {appt.get('date')} at {appt.get('time')} — {appt.get('reason','')}.",
+         "doctorId": appt.get("doctorId"), "patientRef": appt.get("patientId"),
+         "createdAt": _now_iso()}
+    )
+    send_push(doctor.get("fcmToken"), "New appointment", alert_id)
+    if patient.get("email"):
+        send_email(
+            patient["email"],
+            f"Appointment confirmed — {appt.get('date')} at {appt.get('time')}",
+            f"<p>Namaste {patient.get('name','')},</p>"
+            f"<p>Your appointment with {doctor.get('displayName','your doctor')} is confirmed for "
+            f"<b>{appt.get('date')} at {appt.get('time')}</b>.</p>"
+            f"<p>Reason: {appt.get('reason','')}</p><p>— Arya, {doctor.get('hospitalId','your clinic')}</p>",
+        )
 
 
 @app.get("/appointments")
@@ -298,11 +328,12 @@ class SaveConvReq(BaseModel):
     language: str = "en"
     turns: list[dict]
     summary: str = ""
+    id: Optional[str] = None
 
 
 @app.post("/conversations")
 def save_conversation(req: SaveConvReq) -> dict:
-    conv_id = f"conv-{int(time.time()*1000)}"
+    conv_id = req.id or f"conv-{int(time.time()*1000)}"
     # Resolve the patient's primary doctor if not supplied.
     doctor_id = req.doctorId
     if not doctor_id:
@@ -317,11 +348,88 @@ def save_conversation(req: SaveConvReq) -> dict:
 
 
 @app.get("/conversations")
-def list_conversations(patientId: str) -> dict:
-    convs = [s.to_dict() for s in db().collection("conversations").stream()
-             if (s.to_dict() or {}).get("patientId") == patientId]
+def list_conversations(patientId: Optional[str] = None, doctorId: Optional[str] = None) -> dict:
+    convs = []
+    for s in db().collection("conversations").stream():
+        c = s.to_dict() or {}
+        if patientId and c.get("patientId") != patientId:
+            continue
+        if doctorId and c.get("doctorId") != doctorId:
+            continue
+        convs.append(c)
     convs.sort(key=lambda c: c.get("startedAt", ""), reverse=True)
     return {"conversations": convs}
+
+
+@app.get("/conversations/{conv_id}")
+def get_conversation(conv_id: str) -> dict:
+    snap = db().collection("conversations").document(conv_id).get()
+    if not snap.exists:
+        raise HTTPException(404, "conversation not found")
+    return snap.to_dict() or {}
+
+
+@app.post("/conversations/{conv_id}/finalize")
+def finalize_conversation(conv_id: str) -> dict:
+    """Compute duration + AI summary/insights, mark reviewed-ready, notify doctor."""
+    from call_records import duration_seconds, summarize_call
+
+    snap = db().collection("conversations").document(conv_id).get()
+    if not snap.exists:
+        raise HTTPException(404, "conversation not found")
+    conv = snap.to_dict() or {}
+    turns = conv.get("turns", [])
+    record = summarize_call(turns, conv.get("language", "en"))
+    update = {
+        "summary": record["summary"],
+        "insights": record["insights"],
+        "durationSeconds": duration_seconds(turns),
+        "status": "completed",
+        "endedAt": _now_iso(),
+    }
+    db().collection("conversations").document(conv_id).set(update, merge=True)
+
+    # Notify the assigned doctor that a call/conversation is ready to review.
+    if not conv.get("notified"):
+        alert_id = f"alert-{int(time.time()*1000)}"
+        db().collection("alerts").document(alert_id).set(
+            {"id": alert_id, "orgId": conv.get("orgId", "demo-org"), "severity": "info",
+             "kind": "call_completed", "title": f"{conv.get('channel','call').title()} completed",
+             "body": record["summary"][:200], "doctorId": conv.get("doctorId"),
+             "conversationRef": conv_id, "createdAt": _now_iso()}
+        )
+        db().collection("conversations").document(conv_id).set({"notified": True}, merge=True)
+    return {"finalized": True, **update}
+
+
+class FeedbackReq(BaseModel):
+    handledCorrectly: bool
+    rating: int = 0  # 1-5
+    notes: str = ""
+    reviewedBy: Optional[str] = None
+
+
+@app.post("/conversations/{conv_id}/feedback")
+def conversation_feedback(conv_id: str, req: FeedbackReq) -> dict:
+    snap = db().collection("conversations").document(conv_id).get()
+    if not snap.exists:
+        raise HTTPException(404, "conversation not found")
+    db().collection("conversations").document(conv_id).set(
+        {"feedback": {"handledCorrectly": req.handledCorrectly, "rating": req.rating,
+                      "notes": req.notes, "reviewedBy": req.reviewedBy, "at": _now_iso()}},
+        merge=True,
+    )
+    audit(req.reviewedBy or "doctor", "review_conversation", f"conversations/{conv_id}")
+    return {"saved": True}
+
+
+@app.get("/doctors/{doctor_id}/calls")
+def doctor_calls(doctor_id: str) -> dict:
+    """All conversations/calls for a doctor's patients, newest first."""
+    convs = [s.to_dict() for s in db().collection("conversations").stream()
+             if (s.to_dict() or {}).get("doctorId") == doctor_id]
+    convs.sort(key=lambda c: c.get("startedAt", ""), reverse=True)
+    return {"calls": convs}
 
 
 # ── Patient context (Arya's knowledge for a call) ───────────────────────
@@ -329,6 +437,29 @@ def list_conversations(patientId: str) -> dict:
 def patient_context(patient_id: str) -> dict:
     ctx = build_patient_context(patient_id)
     return {"context": ctx, "summary": context_summary(ctx)}
+
+
+# ── Patient document upload (multilingual RAG grounding) ────────────────
+@app.post("/patients/{patient_id}/document")
+async def upload_document(patient_id: str, file: UploadFile = File(...)) -> dict:
+    from documents import extract_text, save_document
+
+    data = await file.read()
+    text = extract_text(file.filename or "upload", data)
+    save_document(patient_id, file.filename or "document", text)
+    audit("patient", "upload_document", f"patients/{patient_id}")
+    return {"uploaded": True, "filename": file.filename, "chars": len(text),
+            "preview": text[:300]}
+
+
+@app.get("/patients/{patient_id}/document")
+def get_document(patient_id: str) -> dict:
+    from documents import get_document_text
+
+    snap = db().collection("documents").document(f"doc-{patient_id}").get()
+    meta = snap.to_dict() if snap.exists else None
+    return {"hasDocument": bool(meta), "filename": (meta or {}).get("filename"),
+            "chars": len(get_document_text(patient_id))}
 
 
 # ── Arya conversational brain (text now; same logic powers voice) ───────
