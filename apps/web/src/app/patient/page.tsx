@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { RequireRole } from '@/components/RequireRole';
 import { BookingCalendar } from '@/components/BookingCalendar';
-import { useVoiceRoom } from '@/lib/useVoiceRoom';
+import { CallArya } from '@/components/CallArya';
 import { useAuth } from '@/lib/auth';
 import { api, type ChatMessage } from '@/lib/api';
 
@@ -19,10 +19,6 @@ export default function PatientPage() {
 function PatientCare() {
   const user = useAuth((s) => s.user)!;
   const patientId = user.patientId || 'pat-1';
-  const { status, connect, disconnect } = useVoiceRoom('companion', {
-    patientId,
-    identity: user.displayName,
-  });
 
   const { data } = useQuery({
     queryKey: ['patient-context', patientId],
@@ -44,44 +40,14 @@ function PatientCare() {
         <p className="mt-1 text-lg text-teal-600">Arya is here whenever you need her.</p>
       </motion.div>
 
-      {/* Call your doctor → Arya answers */}
-      <motion.button
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
-        whileHover={{ y: -2 }}
-        whileTap={{ scale: 0.99 }}
-        onClick={status === 'live' ? disconnect : connect}
-        className={`mt-6 grid w-full place-items-center gap-2 rounded-3xl py-8 text-cream-50 shadow-lift ${
-          status === 'live' ? 'bg-signal-red' : 'bg-teal-600'
-        }`}
-      >
-        <motion.span
-          animate={{ scale: status === 'live' ? [1, 1.12, 1] : 1 }}
-          transition={{ repeat: Infinity, duration: 1.4 }}
-          className="text-5xl"
-        >
-          {status === 'live' ? '⏹' : '📞'}
-        </motion.span>
-        <span className="text-lg font-medium">
-          {status === 'live' ? 'On call with Arya — tap to end' : 'Call your doctor'}
-        </span>
-        <span className="text-sm text-cream-100/80">
-          {status === 'connecting' ? 'Connecting…' : 'Arya answers first, in your language'}
-        </span>
-      </motion.button>
-      {status === 'unconfigured' && (
-        <p className="mt-2 text-center text-xs text-amber-700">
-          Voice needs LiveKit keys. Meanwhile, chat with Arya below — same brain, real answers.
-        </p>
-      )}
+      <div className="mt-6">
+        <CallArya patientId={patientId} patientName={user.displayName} />
+      </div>
 
-      {/* Chat with Arya */}
       <AryaChat patientId={patientId} language={lang} />
 
-      {/* Scheduling calendar linked to the doctor */}
       <BookingCalendar patientId={patientId} doctorId={doctorId} />
 
-      {/* Medicines */}
       <section className="mt-8">
         <h2 className="text-xl font-semibold text-teal-900">Your medicines</h2>
         <div className="mt-3 space-y-3">
@@ -116,9 +82,7 @@ function PatientCare() {
           className="mt-8 rounded-2xl bg-teal-50 p-5 shadow-card"
         >
           <h2 className="text-lg font-semibold text-teal-900">Next appointment</h2>
-          <p className="mt-1 text-2xl font-semibold text-teal-800">
-            {nextAppt.date} · {nextAppt.time}
-          </p>
+          <p className="mt-1 text-2xl font-semibold text-teal-800">{nextAppt.date} · {nextAppt.time}</p>
           <p className="text-teal-600">{nextAppt.reason}</p>
         </motion.section>
       )}
@@ -130,12 +94,16 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [docName, setDocName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const sessionRef = useRef<string>(`conv-${Date.now()}`);
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, busy]);
+    api.getDocument(patientId).then((d) => d.hasDocument && setDocName(d.filename || 'document')).catch(() => {});
+  }, [patientId]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, busy]);
 
   async function send(text?: string) {
     const content = (text ?? input).trim();
@@ -145,11 +113,7 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
     setInput('');
     setBusy(true);
     try {
-      const res = await api.aryaChat(patientId, next, {
-        sessionId: sessionRef.current,
-        language,
-        channel: 'chat',
-      });
+      const res = await api.aryaChat(patientId, next, { sessionId: sessionRef.current, language, channel: 'chat' });
       setMessages([...next, { role: 'assistant', content: res.reply }]);
     } catch {
       setMessages([...next, { role: 'assistant', content: 'Sorry, I could not reach the clinic just now.' }]);
@@ -158,26 +122,48 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
     }
   }
 
-  const suggestions = [
-    'When do I take my BP tablet?',
-    'What should I eat?',
-    'Book my next appointment',
-  ];
+  async function upload(file: File) {
+    setUploading(true);
+    try {
+      const r = await api.uploadDocument(patientId, file);
+      setDocName(r.filename);
+      setMessages((m) => [...m, { role: 'assistant', content: `📄 I've read "${r.filename}". Ask me anything about it — in any language.` }]);
+    } catch {
+      setMessages((m) => [...m, { role: 'assistant', content: 'Sorry, I could not read that file.' }]);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  const suggestions = ['When do I take my BP tablet?', 'What should I eat?', 'Book my next appointment'];
 
   return (
     <section className="mt-6 rounded-3xl bg-white p-5 shadow-card">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-teal-600 text-cream-50">A</span>
-        <span className="font-medium text-teal-900">Chat with Arya</span>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-teal-600 text-cream-50">A</span>
+          <span className="font-medium text-teal-900">Chat with Arya</span>
+        </div>
+        <button
+          onClick={() => fileRef.current?.click()}
+          className="flex items-center gap-1.5 rounded-lg bg-cream-100 px-3 py-1.5 text-xs font-medium text-teal-700"
+        >
+          {uploading ? 'Reading…' : docName ? `📄 ${docName.slice(0, 14)}…` : '📎 Upload report'}
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.docx,.txt"
+          className="hidden"
+          onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+        />
       </div>
 
       <div className="max-h-72 space-y-2 overflow-y-auto">
         {messages.length === 0 && (
           <div className="flex flex-wrap gap-2">
             {suggestions.map((s) => (
-              <button key={s} onClick={() => send(s)} className="rounded-full bg-cream-100 px-3 py-1.5 text-sm text-teal-700">
-                {s}
-              </button>
+              <button key={s} onClick={() => send(s)} className="rounded-full bg-cream-100 px-3 py-1.5 text-sm text-teal-700">{s}</button>
             ))}
           </div>
         )}
@@ -202,12 +188,10 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send()}
-          placeholder="Ask about medicines, diet, appointments…"
+          placeholder="Ask in any language…"
           className="flex-1 rounded-xl border border-teal-100 bg-cream-50 px-4 py-2.5 text-teal-900 outline-none focus:border-teal-400"
         />
-        <button onClick={() => send()} disabled={busy} className="rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-medium text-cream-50 disabled:opacity-60">
-          Send
-        </button>
+        <button onClick={() => send()} disabled={busy} className="rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-medium text-cream-50 disabled:opacity-60">Send</button>
       </div>
     </section>
   );
