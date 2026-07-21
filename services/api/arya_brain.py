@@ -41,12 +41,15 @@ def build_patient_context(patient_id: str) -> dict[str, Any]:
          if (s.to_dict() or {}).get("patientId") == patient_id),
         None,
     )
+    from documents import get_document_text
+
     return {
         "patient": patient,
         "prescriptions": prescriptions,
         "encounters": encounters[:3],
         "appointments": appointments,
         "carePlan": care,
+        "document": get_document_text(patient_id),
     }
 
 
@@ -78,21 +81,28 @@ def context_summary(ctx: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-_LANG_NAMES = {"en": "English", "hi": "Hindi", "kn": "Kannada", "ta": "Tamil"}
+_LANG_NAMES = {
+    "en": "English", "hi": "Hindi", "kn": "Kannada", "ta": "Tamil",
+    "te": "Telugu", "ml": "Malayalam", "mr": "Marathi", "bn": "Bengali",
+    "gu": "Gujarati", "pa": "Punjabi", "or": "Odia",
+}
+
+# Unicode script blocks → language. Devanagari defaults to Hindi.
+_SCRIPT_BLOCKS = [
+    ("bn", 0x0980, 0x09FF), ("pa", 0x0A00, 0x0A7F), ("gu", 0x0A80, 0x0AFF),
+    ("or", 0x0B00, 0x0B7F), ("ta", 0x0B80, 0x0BFF), ("te", 0x0C00, 0x0C7F),
+    ("kn", 0x0C80, 0x0CFF), ("ml", 0x0D00, 0x0D7F), ("hi", 0x0900, 0x097F),
+]
 
 
 def detect_message_language(text: str) -> str:
     """Detect language from script so we can force the reply language."""
     for ch in text:
         cp = ord(ch)
-        if 0x0C80 <= cp <= 0x0CFF:
-            return "kn"
-        if 0x0B80 <= cp <= 0x0BFF:
-            return "ta"
-        if 0x0900 <= cp <= 0x097F:
-            return "hi"
-    # Latin text: could be English or romanized Hindi; treat as English unless
-    # obvious Hindi romanization markers appear.
+        for lang, lo, hi in _SCRIPT_BLOCKS:
+            if lo <= cp <= hi:
+                return lang
+    # Latin text: English, or romanized Hindi if markers appear.
     low = text.lower()
     if any(w in low for w in (" hai", " kya", " dawai", " kab", " nahi", "mujhe", "aap")):
         return "hi"
@@ -106,7 +116,8 @@ def companion_system_prompt(ctx: dict[str, Any]) -> str:
         "answering on behalf of the patient's doctor. The patient has called the "
         "clinic; you handle the call directly, escalating to the human doctor for "
         "anything clinically serious or outside routine care.\n\n"
-        "LANGUAGES: You fluently speak English, Hindi, Kannada, and Tamil. ALWAYS "
+        "LANGUAGES: You fluently speak English, Hindi, Kannada, Tamil, Telugu, "
+        "Malayalam, Marathi, Bengali, Gujarati, Punjabi and Odia. ALWAYS "
         "reply in the SAME language the patient used in their latest message — if "
         "they write in English, reply in English; in Hindi, reply in Hindi; and so "
         "on. Mirror code-switching (Hinglish/Tanglish/Kanglish) too. Only if it's "
@@ -132,6 +143,12 @@ def companion_system_prompt(ctx: dict[str, Any]) -> str:
         "care immediately, and say the doctor is being alerted.\n\n"
         "Known patient context (do not read aloud; use to personalize):\n"
         + context_summary(ctx)
+        + (
+            "\n\nUploaded patient document (answer questions grounded in this; if "
+            "the answer isn't here, say so):\n" + ctx["document"][:8000]
+            if ctx.get("document")
+            else ""
+        )
     )
 
 
@@ -251,6 +268,7 @@ def execute_tool(name: str, args: dict, patient_id: str, ctx: dict) -> dict:
                 "doctorId": doctor_id, "date": date, "time": tm, "status": "booked",
                 "reason": args.get("reason", "Follow-up"), "createdAt": _iso()}
         database.collection("appointments").document(appt_id).set(appt)
+        _notify_doctor_booking(appt, ctx)
         audit("patient", "book_appointment", f"appointments/{appt_id}")
         return {"booked": True, "date": date, "time": tm}
 
@@ -269,6 +287,31 @@ def execute_tool(name: str, args: dict, patient_id: str, ctx: dict) -> dict:
         return {"rescheduled": True, "date": date, "time": tm}
 
     return {"error": f"unknown tool {name}"}
+
+
+def _notify_doctor_booking(appt: dict, ctx: dict) -> None:
+    """Alert the assigned doctor + email the patient when Arya books by voice/chat."""
+    database = db()
+    alert_id = f"alert-{int(time.time()*1000)}"
+    database.collection("alerts").document(alert_id).set(
+        {"id": alert_id, "orgId": appt.get("orgId", "demo-org"), "severity": "info",
+         "kind": "appointment", "title": "New appointment booked (via Arya)",
+         "body": f"{appt.get('patientName','A patient')} booked {appt.get('date')} at {appt.get('time')}.",
+         "doctorId": appt.get("doctorId"), "patientRef": appt.get("patientId"), "createdAt": _iso()}
+    )
+    patient = ctx.get("patient", {})
+    if patient.get("email"):
+        try:
+            from integrations import send_email
+
+            send_email(
+                patient["email"],
+                f"Appointment confirmed — {appt.get('date')} at {appt.get('time')}",
+                f"<p>Namaste {patient.get('name','')},</p><p>Arya has booked your appointment for "
+                f"<b>{appt.get('date')} at {appt.get('time')}</b>.</p>",
+            )
+        except Exception:
+            pass
 
 
 def _resolve_day(text: str) -> str | None:
