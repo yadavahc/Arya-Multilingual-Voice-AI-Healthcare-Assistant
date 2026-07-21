@@ -49,6 +49,49 @@ def send_sms(to: str, body: str) -> bool:
     return True
 
 
+def send_email(to: str, subject: str, body: str) -> bool:
+    """Send an email via Resend (if RESEND_API_KEY set) or SMTP (if configured);
+    otherwise log a no-op so flows still work in dev."""
+    import os
+
+    resend_key = os.getenv("RESEND_API_KEY")
+    if resend_key:
+        try:
+            import httpx
+
+            from_addr = os.getenv("EMAIL_FROM", "Arya <onboarding@resend.dev>")
+            httpx.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {resend_key}"},
+                json={"from": from_addr, "to": [to], "subject": subject, "html": body},
+                timeout=8.0,
+            )
+            return True
+        except Exception as exc:  # pragma: no cover
+            logger.warning("resend email failed: %s", exc)
+
+    smtp_host = os.getenv("SMTP_HOST")
+    if smtp_host:
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+
+            msg = MIMEText(body, "html")
+            msg["Subject"] = subject
+            msg["From"] = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "arya@localhost"))
+            msg["To"] = to
+            with smtplib.SMTP(smtp_host, int(os.getenv("SMTP_PORT", "587"))) as s:
+                s.starttls()
+                s.login(os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASSWORD", ""))
+                s.send_message(msg)
+            return True
+        except Exception as exc:  # pragma: no cover
+            logger.warning("smtp email failed: %s", exc)
+
+    logger.info("[dev] email to %s | %s", to, subject)
+    return True
+
+
 def send_push(token: Optional[str], title: str, body: str, data: Optional[dict] = None) -> bool:
     if not token:
         logger.info("[dev] push (no token): %s — %s", title, body)
