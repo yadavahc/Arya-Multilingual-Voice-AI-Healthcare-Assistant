@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from arya_brain import build_patient_context, chat as arya_chat, context_summary
+from calendar_slots import available_slots, next_available
 from config import get_settings
 from firestore_client import audit, db, mode
 from graphs.gap_graph import detect_gaps
@@ -119,11 +120,7 @@ def auth_resolve(req: ResolveReq) -> dict:
             raise HTTPException(403, "This number is not registered as clinical staff.")
         if req.portal == "patient" and role != "patient":
             raise HTTPException(403, "This number is registered as staff; use the staff portal.")
-        return {
-            "uid": match.get("uid"), "role": role, "orgId": match.get("orgId"),
-            "displayName": match.get("displayName"), "patientId": match.get("patientId"),
-            "preferredLanguage": match.get("preferredLanguage", "en"),
-        }
+        return _public_profile(match)
 
     # Unknown number. Doctors must be pre-registered; patients self-provision.
     if req.portal == "doctor":
@@ -144,6 +141,189 @@ def auth_resolve(req: ResolveReq) -> dict:
             "patientId": pat_id, "preferredLanguage": "en", "isNew": True}
 
 
+# ── Google sign-in: resolve by email; onboarding if new ─────────────────
+class GoogleAuthReq(BaseModel):
+    email: str
+    displayName: str = ""
+
+
+@app.post("/auth/google")
+def auth_google(req: GoogleAuthReq) -> dict:
+    email = req.email.strip().lower()
+    match = next(
+        (s.to_dict() for s in db().collection("users").stream()
+         if (s.to_dict() or {}).get("email", "").lower() == email),
+        None,
+    )
+    if match and match.get("hospitalId") and match.get("role"):
+        return {"needsOnboarding": False, "profile": _public_profile(match)}
+    return {"needsOnboarding": True, "profile": {"email": email, "displayName": req.displayName}}
+
+
+class OnboardReq(BaseModel):
+    email: str
+    role: str  # "doctor" | "patient"
+    displayName: str
+    phone: str
+    hospitalId: str
+    preferredLanguage: str = "en"
+
+
+@app.post("/profile/complete")
+def profile_complete(req: OnboardReq) -> dict:
+    email = req.email.strip().lower()
+    if req.role == "doctor":
+        uid = f"doc-{int(time.time()*1000)}"
+        user = {"uid": uid, "role": "doctor", "orgId": "demo-org", "hospitalId": req.hospitalId,
+                "displayName": req.displayName, "email": email, "phone": req.phone,
+                "specialty": "General Medicine", "preferredLanguage": req.preferredLanguage,
+                "availability": {"days": [0, 1, 2, 3, 4], "start": "09:00", "end": "17:00", "slotMinutes": 30,
+                                 "lunch": {"start": "13:00", "end": "14:00"}}, "createdAt": _now_iso()}
+        db().collection("users").document(uid).set(user)
+    else:
+        pat_id = f"pat-{int(time.time()*1000)}"
+        db().collection("patients").document(pat_id).set(
+            {"id": pat_id, "orgId": "demo-org", "hospitalId": req.hospitalId, "name": req.displayName,
+             "email": email, "phone": req.phone, "preferredLanguage": req.preferredLanguage,
+             "conditions": [], "allergies": [], "createdAt": _now_iso()}
+        )
+        uid = f"user-{pat_id}"
+        user = {"uid": uid, "role": "patient", "orgId": "demo-org", "hospitalId": req.hospitalId,
+                "patientId": pat_id, "displayName": req.displayName, "email": email, "phone": req.phone,
+                "preferredLanguage": req.preferredLanguage, "createdAt": _now_iso()}
+        db().collection("users").document(uid).set(user)
+    audit("system", "complete_profile", f"users/{uid}")
+    return {"needsOnboarding": False, "profile": _public_profile(user)}
+
+
+def _public_profile(u: dict) -> dict:
+    return {"uid": u.get("uid"), "role": u.get("role"), "orgId": u.get("orgId"),
+            "hospitalId": u.get("hospitalId"), "displayName": u.get("displayName"),
+            "email": u.get("email"), "phone": u.get("phone"),
+            "patientId": u.get("patientId"), "preferredLanguage": u.get("preferredLanguage", "en")}
+
+
+# ── Hospitals + doctors (onboarding + patient↔doctor connection) ────────
+@app.get("/hospitals")
+def hospitals() -> dict:
+    return {"hospitals": [s.to_dict() for s in db().collection("hospitals").stream()]}
+
+
+@app.get("/doctors")
+def doctors(hospitalId: str) -> dict:
+    docs = [_public_profile(s.to_dict() or {}) | {"specialty": (s.to_dict() or {}).get("specialty")}
+            for s in db().collection("users").stream()
+            if (s.to_dict() or {}).get("role") == "doctor"
+            and (s.to_dict() or {}).get("hospitalId") == hospitalId]
+    return {"doctors": docs}
+
+
+# ── Doctor's patients (same hospital) + full patient detail ─────────────
+@app.get("/doctors/{doctor_id}/patients")
+def doctor_patients(doctor_id: str) -> dict:
+    dsnap = db().collection("users").document(doctor_id).get()
+    hosp = (dsnap.to_dict() or {}).get("hospitalId") if dsnap.exists else None
+    pats = [s.to_dict() for s in db().collection("patients").stream()
+            if (s.to_dict() or {}).get("hospitalId") == hosp]
+    return {"patients": pats}
+
+
+@app.get("/patients/{patient_id}/detail")
+def patient_detail(patient_id: str) -> dict:
+    ctx = build_patient_context(patient_id)
+    convs = sorted(
+        [s.to_dict() for s in db().collection("conversations").stream()
+         if (s.to_dict() or {}).get("patientId") == patient_id],
+        key=lambda c: c.get("startedAt", ""), reverse=True,
+    )
+    appts = [s.to_dict() for s in db().collection("appointments").stream()
+             if (s.to_dict() or {}).get("patientId") == patient_id]
+    return {"context": ctx, "conversations": convs, "appointments": appts}
+
+
+# ── Calendar: available slots (patient booking + Arya + doctor view) ────
+@app.get("/calendar/slots")
+def calendar_slots(doctorId: str, date: str) -> dict:
+    return {"doctorId": doctorId, "date": date, "slots": available_slots(doctorId, date)}
+
+
+@app.get("/calendar/next")
+def calendar_next(doctorId: str) -> dict:
+    return next_available(doctorId)
+
+
+class BookReq(BaseModel):
+    patientId: str
+    doctorId: str
+    date: str
+    time: str
+    reason: str = "Consultation"
+
+
+@app.post("/appointments/book")
+def appointments_book(req: BookReq) -> dict:
+    # Guard against double-booking the same slot.
+    if req.time not in available_slots(req.doctorId, req.date):
+        raise HTTPException(409, "That slot is no longer available.")
+    psnap = db().collection("patients").document(req.patientId).get()
+    pname = (psnap.to_dict() or {}).get("name", "Patient") if psnap.exists else "Patient"
+    appt_id = f"appt-{int(time.time()*1000)}"
+    appt = {"id": appt_id, "orgId": "demo-org", "patientId": req.patientId, "patientName": pname,
+            "doctorId": req.doctorId, "date": req.date, "time": req.time, "status": "booked",
+            "reason": req.reason, "createdAt": _now_iso()}
+    db().collection("appointments").document(appt_id).set(appt)
+    audit("patient", "book_appointment", f"appointments/{appt_id}")
+    return {"booked": True, "appointment": appt}
+
+
+@app.get("/appointments")
+def appointments_list(doctorId: Optional[str] = None, patientId: Optional[str] = None) -> dict:
+    out = []
+    for s in db().collection("appointments").stream():
+        a = s.to_dict() or {}
+        if doctorId and a.get("doctorId") != doctorId:
+            continue
+        if patientId and a.get("patientId") != patientId:
+            continue
+        out.append(a)
+    out.sort(key=lambda a: (a.get("date", ""), a.get("time", "")))
+    return {"appointments": out}
+
+
+# ── Conversations (doctor tracks what Arya discussed) ───────────────────
+class SaveConvReq(BaseModel):
+    patientId: str
+    doctorId: Optional[str] = None
+    channel: str = "chat"  # chat | voice
+    language: str = "en"
+    turns: list[dict]
+    summary: str = ""
+
+
+@app.post("/conversations")
+def save_conversation(req: SaveConvReq) -> dict:
+    conv_id = f"conv-{int(time.time()*1000)}"
+    # Resolve the patient's primary doctor if not supplied.
+    doctor_id = req.doctorId
+    if not doctor_id:
+        psnap = db().collection("patients").document(req.patientId).get()
+        doctor_id = (psnap.to_dict() or {}).get("primaryDoctorId") if psnap.exists else None
+    db().collection("conversations").document(conv_id).set(
+        {"id": conv_id, "orgId": "demo-org", "patientId": req.patientId, "doctorId": doctor_id,
+         "channel": req.channel, "language": req.language, "turns": req.turns,
+         "summary": req.summary, "startedAt": _now_iso()}
+    )
+    return {"saved": True, "id": conv_id}
+
+
+@app.get("/conversations")
+def list_conversations(patientId: str) -> dict:
+    convs = [s.to_dict() for s in db().collection("conversations").stream()
+             if (s.to_dict() or {}).get("patientId") == patientId]
+    convs.sort(key=lambda c: c.get("startedAt", ""), reverse=True)
+    return {"conversations": convs}
+
+
 # ── Patient context (Arya's knowledge for a call) ───────────────────────
 @app.get("/patients/{patient_id}/context")
 def patient_context(patient_id: str) -> dict:
@@ -155,11 +335,29 @@ def patient_context(patient_id: str) -> dict:
 class ChatReq(BaseModel):
     patientId: str
     messages: list[dict]  # [{role: "user"|"assistant", content: str}]
+    sessionId: Optional[str] = None
+    channel: str = "chat"
+    language: str = "en"
 
 
 @app.post("/arya/chat")
 def arya_chat_endpoint(req: ChatReq) -> dict:
     result = arya_chat(req.patientId, req.messages)
+
+    # Persist the running conversation so the doctor can track what was discussed.
+    turns = [{"role": "arya" if m.get("role") == "assistant" else "patient",
+              "text": m.get("content", ""), "at": int(time.time() * 1000)} for m in req.messages]
+    turns.append({"role": "arya", "text": result.get("reply", ""), "at": int(time.time() * 1000)})
+    psnap = db().collection("patients").document(req.patientId).get()
+    doctor_id = (psnap.to_dict() or {}).get("primaryDoctorId") if psnap.exists else None
+    conv_id = req.sessionId or f"conv-{int(time.time()*1000)}"
+    db().collection("conversations").document(conv_id).set(
+        {"id": conv_id, "orgId": "demo-org", "patientId": req.patientId, "doctorId": doctor_id,
+         "channel": req.channel, "language": req.language, "turns": turns,
+         "summary": (result.get("reply", "")[:140]), "startedAt": _now_iso()},
+        merge=True,
+    )
+    result["sessionId"] = conv_id
     return result
 
 
