@@ -103,6 +103,25 @@ export const api = {
     ),
   conversations: (patientId: string) =>
     j<{ conversations: any[] }>(`/conversations?patientId=${patientId}`),
+
+  // Documents (multilingual RAG)
+  uploadDocument: async (patientId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${BASE}/patients/${patientId}/document`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error(`upload → ${res.status}`);
+    return res.json() as Promise<{ uploaded: boolean; filename: string; chars: number; preview: string }>;
+  },
+  getDocument: (patientId: string) =>
+    j<{ hasDocument: boolean; filename?: string; chars: number }>(`/patients/${patientId}/document`),
+
+  // Call review + feedback
+  doctorCalls: (doctorId: string) => j<{ calls: any[] }>(`/doctors/${doctorId}/calls`),
+  getConversation: (convId: string) => j<any>(`/conversations/${convId}`),
+  finalizeConversation: (convId: string) =>
+    j<any>(`/conversations/${convId}/finalize`, { method: 'POST' }),
+  conversationFeedback: (convId: string, body: { handledCorrectly: boolean; rating: number; notes: string; reviewedBy?: string }) =>
+    j<{ saved: boolean }>(`/conversations/${convId}/feedback`, { method: 'POST', body: JSON.stringify(body) }),
 };
 
 export interface ResolvedIdentity {

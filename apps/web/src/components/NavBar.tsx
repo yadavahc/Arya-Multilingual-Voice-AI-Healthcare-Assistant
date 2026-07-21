@@ -5,8 +5,8 @@ import { useAuth } from '@/lib/auth';
 
 const staffLinks = [
   { href: '/doctor', label: 'My Patients' },
+  { href: '/doctor/calls', label: 'Call Reviews' },
   { href: '/consult', label: 'Live Consult' },
-  { href: '/console', label: 'Call Console' },
   { href: '/admin', label: 'Analytics' },
 ];
 const patientLinks = [{ href: '/patient', label: 'My Care' }];
