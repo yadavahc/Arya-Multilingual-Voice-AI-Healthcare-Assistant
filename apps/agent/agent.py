@@ -205,8 +205,43 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     agent = Agent(instructions=instructions, tools=tools)
 
-    # ── Per-turn latency instrumentation ────────────────────────────────
+    # ── Per-turn latency instrumentation + transcript capture ───────────
     turn_start_speech_end: dict[str, float] = {}
+    call_turns: list[dict] = []  # full transcript for the doctor's review
+
+    @session.on("conversation_item_added")
+    def _on_item(ev) -> None:
+        # Capture Arya's (assistant) spoken turns for the transcript.
+        try:
+            item = ev.item
+            role = getattr(item, "role", "")
+            text = getattr(item, "text_content", None) or getattr(item, "text", "")
+            if role == "assistant" and text:
+                call_turns.append({"role": "arya", "text": text, "at": int(time.time() * 1000)})
+        except Exception:
+            pass
+
+    async def _finalize_call() -> None:
+        # On hang-up: persist the transcript, then generate summary/insights and
+        # notify the assigned doctor (Call Reviews dashboard).
+        if not call_turns:
+            return
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                await client.post(
+                    f"{API_BASE_URL.rstrip('/')}/conversations",
+                    json={"id": session_id, "patientId": state.patient_id or "pat-1",
+                          "channel": "voice", "language": state.detected_language,
+                          "turns": call_turns},
+                )
+                # Reuse the same session id so summary attaches to this call.
+                await client.post(f"{API_BASE_URL.rstrip('/')}/conversations/{session_id}/finalize")
+        except Exception:
+            pass
+
+    ctx.add_shutdown_callback(_finalize_call)
 
     @session.on("user_input_transcribed")
     def _on_user_transcript(ev) -> None:
@@ -215,6 +250,7 @@ async def entrypoint(ctx: JobContext) -> None:
         if not text.strip():
             return
         turn_start_speech_end["t"] = time.monotonic()
+        call_turns.append({"role": "patient", "text": text, "at": int(time.time() * 1000)})
 
         lang = detect_language_from_text(text)
         if lang != state.detected_language:
