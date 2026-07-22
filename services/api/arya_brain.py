@@ -144,8 +144,13 @@ def companion_system_prompt(ctx: dict[str, Any]) -> str:
         "Known patient context (do not read aloud; use to personalize):\n"
         + context_summary(ctx)
         + (
-            "\n\nUploaded patient document (answer questions grounded in this; if "
-            "the answer isn't here, say so):\n" + ctx["document"][:8000]
+            "\n\nThe patient has UPLOADED the following document(s) (e.g. a "
+            "prescription or lab report). Treat this as a current, authoritative "
+            "source: answer questions about its medicines, tests, values, dates "
+            "and instructions directly and accurately from it. If it differs from "
+            "the structured records above, prefer this uploaded document and say "
+            "the information is from their uploaded report. If an answer isn't in "
+            "it, say so.\n\n" + ctx["document"][:8000]
             if ctx.get("document")
             else ""
         )
