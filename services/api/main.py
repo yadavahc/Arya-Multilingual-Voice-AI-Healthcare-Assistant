@@ -179,8 +179,8 @@ def profile_complete(req: OnboardReq) -> dict:
         user = {"uid": uid, "role": "doctor", "orgId": "demo-org", "hospitalId": req.hospitalId,
                 "displayName": req.displayName, "email": email, "phone": req.phone,
                 "specialty": "General Medicine", "preferredLanguage": req.preferredLanguage,
-                "availability": {"days": [0, 1, 2, 3, 4], "start": "09:00", "end": "17:00", "slotMinutes": 30,
-                                 "lunch": {"start": "13:00", "end": "14:00"}}, "createdAt": _now_iso()}
+                "availability": {"days": [0, 1, 2, 3, 4], "slots": ["10:00", "12:30", "16:00"]},
+                "createdAt": _now_iso()}
         db().collection("users").document(uid).set(user)
     else:
         pat_id = f"pat-{int(time.time()*1000)}"
@@ -270,42 +270,85 @@ def appointments_book(req: BookReq) -> dict:
     psnap = db().collection("patients").document(req.patientId).get()
     pname = (psnap.to_dict() or {}).get("name", "Patient") if psnap.exists else "Patient"
     appt_id = f"appt-{int(time.time()*1000)}"
+    # New bookings await doctor approval.
     appt = {"id": appt_id, "orgId": "demo-org", "patientId": req.patientId, "patientName": pname,
-            "doctorId": req.doctorId, "date": req.date, "time": req.time, "status": "booked",
+            "doctorId": req.doctorId, "date": req.date, "time": req.time, "status": "pending",
             "reason": req.reason, "createdAt": _now_iso()}
     db().collection("appointments").document(appt_id).set(appt)
     _notify_booking(appt)
     audit("patient", "book_appointment", f"appointments/{appt_id}")
-    return {"booked": True, "appointment": appt}
+    return {"booked": True, "status": "pending", "appointment": appt}
 
 
 def _notify_booking(appt: dict) -> None:
-    """Alert the assigned doctor and email the patient a confirmation."""
+    """Alert the assigned doctor that a booking needs their confirmation."""
+    alert_id = f"alert-{int(time.time()*1000)}"
+    db().collection("alerts").document(alert_id).set(
+        {"id": alert_id, "orgId": appt.get("orgId", "demo-org"), "severity": "info",
+         "kind": "appointment_pending", "title": "Appointment awaiting confirmation",
+         "body": f"{appt.get('patientName','A patient')} requested {appt.get('date')} at {appt.get('time')} — {appt.get('reason','')}. Confirm from your dashboard.",
+         "doctorId": appt.get("doctorId"), "patientRef": appt.get("patientId"),
+         "appointmentRef": appt.get("id"), "createdAt": _now_iso()}
+    )
+    dsnap = db().collection("users").document(appt.get("doctorId", "")).get()
+    send_push((dsnap.to_dict() or {}).get("fcmToken") if dsnap.exists else None,
+              "New appointment request", appt.get("id", ""))
+
+
+@app.post("/appointments/{appt_id}/confirm")
+def confirm_appointment(appt_id: str) -> dict:
+    """Doctor confirms a pending appointment → notify + email the patient."""
     from integrations import send_email
+
+    snap = db().collection("appointments").document(appt_id).get()
+    if not snap.exists:
+        raise HTTPException(404, "appointment not found")
+    appt = snap.to_dict() or {}
+    db().collection("appointments").document(appt_id).set({"status": "confirmed", "confirmedAt": _now_iso()}, merge=True)
 
     dsnap = db().collection("users").document(appt.get("doctorId", "")).get()
     doctor = dsnap.to_dict() if dsnap.exists else {}
     psnap = db().collection("patients").document(appt.get("patientId", "")).get()
     patient = psnap.to_dict() if psnap.exists else {}
+    hsnap = db().collection("hospitals").document(doctor.get("hospitalId", "")).get()
+    hospital = (hsnap.to_dict() or {}).get("name", "your clinic") if hsnap.exists else "your clinic"
 
+    # In-app notification to the patient.
     alert_id = f"alert-{int(time.time()*1000)}"
     db().collection("alerts").document(alert_id).set(
         {"id": alert_id, "orgId": appt.get("orgId", "demo-org"), "severity": "info",
-         "kind": "appointment", "title": "New appointment booked",
-         "body": f"{appt.get('patientName','A patient')} booked {appt.get('date')} at {appt.get('time')} — {appt.get('reason','')}.",
-         "doctorId": appt.get("doctorId"), "patientRef": appt.get("patientId"),
-         "createdAt": _now_iso()}
+         "kind": "appointment_confirmed", "title": "Appointment confirmed",
+         "body": f"Your appointment on {appt.get('date')} at {appt.get('time')} with {doctor.get('displayName','your doctor')} is confirmed.",
+         "patientId": appt.get("patientId"), "appointmentRef": appt_id, "createdAt": _now_iso()}
     )
-    send_push(doctor.get("fcmToken"), "New appointment", alert_id)
+    emailed = False
     if patient.get("email"):
-        send_email(
+        emailed = send_email(
             patient["email"],
             f"Appointment confirmed — {appt.get('date')} at {appt.get('time')}",
+            f"<div style='font-family:sans-serif'>"
+            f"<h2 style='color:#1c7a76'>Your appointment is confirmed ✅</h2>"
             f"<p>Namaste {patient.get('name','')},</p>"
-            f"<p>Your appointment with {doctor.get('displayName','your doctor')} is confirmed for "
-            f"<b>{appt.get('date')} at {appt.get('time')}</b>.</p>"
-            f"<p>Reason: {appt.get('reason','')}</p><p>— Arya, {doctor.get('hospitalId','your clinic')}</p>",
+            f"<p>Your appointment has been confirmed by the doctor:</p>"
+            f"<table style='border-collapse:collapse'>"
+            f"<tr><td style='padding:4px 12px 4px 0'><b>Date</b></td><td>{appt.get('date')}</td></tr>"
+            f"<tr><td style='padding:4px 12px 4px 0'><b>Time slot</b></td><td>{appt.get('time')}</td></tr>"
+            f"<tr><td style='padding:4px 12px 4px 0'><b>Doctor</b></td><td>{doctor.get('displayName','')} ({doctor.get('specialty','')})</td></tr>"
+            f"<tr><td style='padding:4px 12px 4px 0'><b>Hospital</b></td><td>{hospital}</td></tr>"
+            f"<tr><td style='padding:4px 12px 4px 0'><b>Reason</b></td><td>{appt.get('reason','')}</td></tr>"
+            f"</table><p style='color:#279791'>— Arya</p></div>",
         )
+    audit(appt.get("doctorId", "doctor"), "confirm_appointment", f"appointments/{appt_id}")
+    return {"confirmed": True, "emailed": emailed}
+
+
+@app.post("/appointments/{appt_id}/reject")
+def reject_appointment(appt_id: str) -> dict:
+    snap = db().collection("appointments").document(appt_id).get()
+    if not snap.exists:
+        raise HTTPException(404, "appointment not found")
+    db().collection("appointments").document(appt_id).set({"status": "rejected"}, merge=True)
+    return {"rejected": True}
 
 
 @app.get("/appointments")
@@ -473,9 +516,47 @@ async def upload_document(patient_id: str, file: UploadFile = File(...)) -> dict
     data = await file.read()
     text = extract_text(file.filename or "upload", data)
     record = save_document(patient_id, file.filename or "document", text)
+    # Extract meds/conditions and merge into the patient's medical history so
+    # future conversations (voice + chat) are personalized without re-explaining.
+    _extract_history_from_document(patient_id, text)
     audit("patient", "upload_document", f"patients/{patient_id}")
     return {"uploaded": True, "filename": record["filename"], "type": record["type"],
             "chars": record["chars"], "preview": text[:300]}
+
+
+def _extract_history_from_document(patient_id: str, text: str) -> None:
+    settings = get_settings()
+    if not settings.openai_api_key or not text.strip():
+        return
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=settings.openai_api_key)
+        resp = client.chat.completions.create(
+            model=settings.openai_notes_model, temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "Extract structured medical info from this document. "
+                 "Return JSON: {conditions:[str], medications:[str], allergies:[str]}. Empty lists if none."},
+                {"role": "user", "content": text[:6000]},
+            ],
+        )
+        import json as _json
+
+        info = _json.loads(resp.choices[0].message.content or "{}")
+        snap = db().collection("patients").document(patient_id).get()
+        if not snap.exists:
+            return
+        p = snap.to_dict() or {}
+        merged = {
+            "conditions": sorted(set(p.get("conditions", []) + info.get("conditions", []))),
+            "allergies": sorted(set(p.get("allergies", []) + info.get("allergies", []))),
+            "meds": sorted(set(p.get("meds", []) + info.get("medications", []))),
+        }
+        db().collection("patients").document(patient_id).set(merged, merge=True)
+        audit("system", "update_history_from_document", f"patients/{patient_id}")
+    except Exception:
+        pass
 
 
 @app.get("/patients/{patient_id}/documents")
