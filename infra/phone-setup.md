@@ -1,5 +1,28 @@
 # Phone-call support — patients call a hospital number, Arya answers
 
+## ✅ Already configured for this project
+- **Number:** `+19207686876` (Twilio, active)
+- **LiveKit SIP inbound trunk:** `ST_iakWkBZWg7tm` (accepts that number)
+- **Dispatch rule:** `SDR_LCe5AZj4Yxbj` → rooms `call-*`, Arya (companion role)
+- **TwiML bridge endpoint:** `GET/POST /twilio/voice` (returns
+  `<Dial><Sip>sip:+19207686876@arya-62mcncn2.sip.livekit.cloud</Sip></Dial>`)
+
+## The one remaining step: make the API public, then point Twilio at it
+Twilio must reach `/twilio/voice`, so the API needs a public URL:
+```bash
+# Option A — quick test tunnel
+ngrok http 8080
+# Option B — deploy the API (infra/Dockerfile.api → Cloud Run)
+
+# Then wire the number to it (reads creds from services/api/.env):
+PUBLIC_API_URL=https://<your-public-api> python infra/configure_twilio.py
+```
+After that, dial `+19207686876` and Arya answers in the selected language,
+records + transcribes the call, and posts it to the doctor's Call Reviews.
+
+---
+
+
 Patients dial a real PSTN number; the call bridges into a LiveKit room that a
 warm Arya agent worker is already on. Arya answers (not a human), handles the
 whole conversation in the patient's language, and the call is recorded,
