@@ -208,6 +208,16 @@ async def entrypoint(ctx: JobContext) -> None:
     except Exception:
         pass
 
+    # Test fallback: on an outbound bridge the caller ID is our own number, so
+    # caller-ID won't resolve. DEFAULT_PATIENT_ID lets a test call still load a
+    # patient's context. (Leave unset in production.)
+    if not meta_patient_id:
+        default_pid = os.getenv("DEFAULT_PATIENT_ID")
+        if default_pid:
+            meta_patient_id = default_pid
+            fixed_language = os.getenv("DEFAULT_LANGUAGE", fixed_language).lower()
+            logger.info("using DEFAULT_PATIENT_ID=%s (test fallback)", default_pid)
+
     session_id = ctx.room.name
     store = SessionStore()
     logger.info("session %s starting (role=%s, store=%s)", session_id, role, store.mode)
@@ -394,6 +404,9 @@ if __name__ == "__main__":
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             prewarm_fnc=prewarm,
+            # Keep warm processes ready so a phone call is picked up instantly
+            # (no cold-start silence while the caller waits).
+            num_idle_processes=2,
             # Deploy workers in the user's region (asia-south1 for India).
         )
     )
