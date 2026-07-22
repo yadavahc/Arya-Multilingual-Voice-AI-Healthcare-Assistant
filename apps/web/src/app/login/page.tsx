@@ -2,8 +2,10 @@
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { GoogleLogin } from '@/components/GoogleLogin';
+import { useT } from '@/lib/i18n';
 
 export default function LoginPortal() {
+  const t = useT();
   return (
     <div className="mx-auto flex max-w-md flex-col px-6 py-16">
       <motion.div
@@ -16,32 +18,24 @@ export default function LoginPortal() {
           <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-teal-600 text-2xl font-semibold text-cream-50">
             A
           </div>
-          <h1 className="text-2xl font-semibold text-teal-900">Welcome to Arya</h1>
-          <p className="mt-1 text-sm text-teal-600">
-            Sign in — patients talk to Arya, clinicians manage care.
-          </p>
+          <h1 className="text-2xl font-semibold text-teal-900">{t('login.welcome')}</h1>
+          <p className="mt-1 text-sm text-teal-600">{t('login.subtitle')}</p>
         </div>
 
         <GoogleLogin />
 
         <div className="my-6 flex items-center gap-3 text-xs text-teal-400">
           <span className="h-px flex-1 bg-teal-100" />
-          or use the demo phone login
+          {t('login.orPhone')}
           <span className="h-px flex-1 bg-teal-100" />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <Link
-            href="/login/patient"
-            className="rounded-xl bg-cream-100 py-3 text-center text-sm font-medium text-teal-800"
-          >
-            🙋 Patient
+          <Link href="/login/patient" className="rounded-xl bg-cream-100 py-3 text-center text-sm font-medium text-teal-800">
+            🙋 {t('login.patient')}
           </Link>
-          <Link
-            href="/login/doctor"
-            className="rounded-xl bg-cream-100 py-3 text-center text-sm font-medium text-teal-800"
-          >
-            🩺 Clinician
+          <Link href="/login/doctor" className="rounded-xl bg-cream-100 py-3 text-center text-sm font-medium text-teal-800">
+            🩺 {t('login.clinician')}
           </Link>
         </div>
       </motion.div>

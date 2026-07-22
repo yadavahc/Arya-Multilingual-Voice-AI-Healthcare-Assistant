@@ -4,12 +4,14 @@ import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useT } from '@/lib/i18n';
 import { firebaseReady, signInWithGoogle } from '@/lib/firebase';
 
 /** Google sign-in. On success, resolves the profile; routes to onboarding if new. */
 export function GoogleLogin() {
   const router = useRouter();
   const setUser = useAuth((s) => s.setUser);
+  const t = useT();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +56,7 @@ export function GoogleLogin() {
         className="flex w-full items-center justify-center gap-3 rounded-xl border border-teal-100 bg-white py-3 font-medium text-teal-900 shadow-card disabled:opacity-60"
       >
         <GoogleG />
-        {loading ? 'Signing in…' : 'Continue with Google'}
+        {loading ? 'Signing in…' : t('login.google')}
       </motion.button>
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-signal-red">{error}</p>}
       {!firebaseReady && (
