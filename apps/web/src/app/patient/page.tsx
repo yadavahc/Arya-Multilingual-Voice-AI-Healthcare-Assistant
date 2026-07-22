@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RequireRole } from '@/components/RequireRole';
 import { BookingCalendar } from '@/components/BookingCalendar';
 import { CallArya } from '@/components/CallArya';
 import { useAuth } from '@/lib/auth';
+import { useLang, useT } from '@/lib/i18n';
 import { api, type ChatMessage } from '@/lib/api';
 
 export default function PatientPage() {
@@ -18,6 +19,7 @@ export default function PatientPage() {
 
 function PatientCare() {
   const user = useAuth((s) => s.user)!;
+  const t = useT();
   const patientId = user.patientId || 'pat-1';
 
   const { data } = useQuery({
@@ -31,25 +33,26 @@ function PatientCare() {
   const meds = rx?.drugs ?? [];
   const schedule = rx?.schedule ?? [];
   const nextAppt = ctx?.appointments?.[0];
-  const lang = patient.preferredLanguage || 'en';
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-8">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-3xl font-semibold text-teal-900">Namaste, {user.displayName}</h1>
-        <p className="mt-1 text-lg text-teal-600">Arya is here whenever you need her.</p>
+        <h1 className="text-3xl font-semibold text-teal-900">{t('patient.greeting')}, {user.displayName}</h1>
+        <p className="mt-1 text-lg text-teal-600">{t('patient.subtitle')}</p>
       </motion.div>
 
       <div className="mt-6">
         <CallArya patientId={patientId} patientName={user.displayName} />
       </div>
 
-      <AryaChat patientId={patientId} language={lang} />
+      <AryaChat patientId={patientId} />
 
       <BookingCalendar patientId={patientId} doctorId={doctorId} />
 
+      <DocumentHistory patientId={patientId} />
+
       <section className="mt-8">
-        <h2 className="text-xl font-semibold text-teal-900">Your medicines</h2>
+        <h2 className="text-xl font-semibold text-teal-900">{t('patient.medicines')}</h2>
         <div className="mt-3 space-y-3">
           {meds.map((m: any, i: number) => {
             const slot = schedule.find((s: any) => (s.drug || '').includes(m.name));
@@ -81,7 +84,7 @@ function PatientCare() {
           viewport={{ once: true }}
           className="mt-8 rounded-2xl bg-teal-50 p-5 shadow-card"
         >
-          <h2 className="text-lg font-semibold text-teal-900">Next appointment</h2>
+          <h2 className="text-lg font-semibold text-teal-900">{t('patient.nextAppt')}</h2>
           <p className="mt-1 text-2xl font-semibold text-teal-800">{nextAppt.date} · {nextAppt.time}</p>
           <p className="text-teal-600">{nextAppt.reason}</p>
         </motion.section>
@@ -90,7 +93,40 @@ function PatientCare() {
   );
 }
 
-function AryaChat({ patientId, language }: { patientId: string; language: string }) {
+function DocumentHistory({ patientId }: { patientId: string }) {
+  const t = useT();
+  const { data } = useQuery({ queryKey: ['documents', patientId], queryFn: () => api.listDocuments(patientId) });
+  const docs = data?.documents ?? [];
+  if (docs.length === 0) return null;
+  const icon = (type: string) => (type === 'prescription' ? '💊' : type === 'lab_report' ? '🧪' : '📄');
+  return (
+    <section className="mt-8">
+      <h2 className="text-xl font-semibold text-teal-900">{t('patient.documents')}</h2>
+      <div className="mt-3 space-y-2">
+        {docs.map((d: any, i: number) => (
+          <motion.div
+            key={d.id}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04 }}
+            className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-card"
+          >
+            <span className="text-2xl">{icon(d.type)}</span>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-teal-900">{d.filename}</p>
+              <p className="text-xs text-teal-500 capitalize">{(d.type || 'document').replace('_', ' ')} · {(d.uploadedAt || '').slice(0, 10)}</p>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AryaChat({ patientId }: { patientId: string }) {
+  const t = useT();
+  const lang = useLang((s) => s.lang);
+  const qc = useQueryClient();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -113,7 +149,7 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
     setInput('');
     setBusy(true);
     try {
-      const res = await api.aryaChat(patientId, next, { sessionId: sessionRef.current, language, channel: 'chat' });
+      const res = await api.aryaChat(patientId, next, { sessionId: sessionRef.current, language: lang, channel: 'chat' });
       setMessages([...next, { role: 'assistant', content: res.reply }]);
     } catch {
       setMessages([...next, { role: 'assistant', content: 'Sorry, I could not reach the clinic just now.' }]);
@@ -127,7 +163,8 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
     try {
       const r = await api.uploadDocument(patientId, file);
       setDocName(r.filename);
-      setMessages((m) => [...m, { role: 'assistant', content: `📄 I've read "${r.filename}". Ask me anything about it — in any language.` }]);
+      qc.invalidateQueries({ queryKey: ['documents', patientId] });
+      setMessages((m) => [...m, { role: 'assistant', content: `📄 I've read "${r.filename}". Ask me anything about it.` }]);
     } catch {
       setMessages((m) => [...m, { role: 'assistant', content: 'Sorry, I could not read that file.' }]);
     } finally {
@@ -135,46 +172,26 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
     }
   }
 
-  const suggestions = ['When do I take my BP tablet?', 'What should I eat?', 'Book my next appointment'];
-
   return (
     <section className="mt-6 rounded-3xl bg-white p-5 shadow-card">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-teal-600 text-cream-50">A</span>
-          <span className="font-medium text-teal-900">Chat with Arya</span>
+          <span className="font-medium text-teal-900">{t('patient.chat')}</span>
         </div>
-        <button
-          onClick={() => fileRef.current?.click()}
-          className="flex items-center gap-1.5 rounded-lg bg-cream-100 px-3 py-1.5 text-xs font-medium text-teal-700"
-        >
-          {uploading ? 'Reading…' : docName ? `📄 ${docName.slice(0, 14)}…` : '📎 Upload report'}
+        <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1.5 rounded-lg bg-cream-100 px-3 py-1.5 text-xs font-medium text-teal-700">
+          {uploading ? 'Reading…' : docName ? `📄 ${docName.slice(0, 14)}…` : `📎 ${t('patient.upload')}`}
         </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".pdf,.docx,.txt"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-        />
+        <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.jpg,.png" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
       </div>
 
       <div className="max-h-72 space-y-2 overflow-y-auto">
-        {messages.length === 0 && (
-          <div className="flex flex-wrap gap-2">
-            {suggestions.map((s) => (
-              <button key={s} onClick={() => send(s)} className="rounded-full bg-cream-100 px-3 py-1.5 text-sm text-teal-700">{s}</button>
-            ))}
-          </div>
-        )}
         {messages.map((m, i) => (
           <motion.div
             key={i}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${
-              m.role === 'user' ? 'ml-auto bg-teal-600 text-cream-50' : 'bg-cream-100 text-teal-900'
-            }`}
+            className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${m.role === 'user' ? 'ml-auto bg-teal-600 text-cream-50' : 'bg-cream-100 text-teal-900'}`}
           >
             {m.content}
           </motion.div>
@@ -188,10 +205,10 @@ function AryaChat({ patientId, language }: { patientId: string; language: string
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && send()}
-          placeholder="Ask in any language…"
+          placeholder={t('patient.ask')}
           className="flex-1 rounded-xl border border-teal-100 bg-cream-50 px-4 py-2.5 text-teal-900 outline-none focus:border-teal-400"
         />
-        <button onClick={() => send()} disabled={busy} className="rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-medium text-cream-50 disabled:opacity-60">Send</button>
+        <button onClick={() => send()} disabled={busy} className="rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-medium text-cream-50 disabled:opacity-60">{t('common.send')}</button>
       </div>
     </section>
   );

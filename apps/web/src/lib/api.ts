@@ -24,6 +24,7 @@ export const api = {
     name?: string;
     role?: string;
     patientId?: string;
+    language?: string;
   }) =>
     j<{ token: string; url: string; room: string }>('/token', {
       method: 'POST',
@@ -113,7 +114,9 @@ export const api = {
     return res.json() as Promise<{ uploaded: boolean; filename: string; chars: number; preview: string }>;
   },
   getDocument: (patientId: string) =>
-    j<{ hasDocument: boolean; filename?: string; chars: number }>(`/patients/${patientId}/document`),
+    j<{ hasDocument: boolean; count: number; filename?: string; chars: number }>(`/patients/${patientId}/document`),
+  listDocuments: (patientId: string) =>
+    j<{ documents: any[] }>(`/patients/${patientId}/documents`),
 
   // Call review + feedback
   doctorCalls: (doctorId: string) => j<{ calls: any[] }>(`/doctors/${doctorId}/calls`),
