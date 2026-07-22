@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { RequireRole } from '@/components/RequireRole';
 import { useAuth } from '@/lib/auth';
+import { useT } from '@/lib/i18n';
 import { api } from '@/lib/api';
 
 export default function DoctorHome() {
@@ -16,6 +17,7 @@ export default function DoctorHome() {
 
 function DoctorInner() {
   const user = useAuth((s) => s.user)!;
+  const t = useT();
   const { data: patientsData } = useQuery({
     queryKey: ['doctor-patients', user.uid],
     queryFn: () => api.doctorPatients(user.uid),
@@ -40,7 +42,7 @@ function DoctorInner() {
         {/* Patients */}
         <div>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-teal-500">
-            Patients ({patients.length})
+            {t('doctor.patients')} ({patients.length})
           </h2>
           <div className="space-y-3">
             {patients.map((p, i) => (
@@ -76,7 +78,7 @@ function DoctorInner() {
         {/* Schedule */}
         <div>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-teal-500">
-            Upcoming appointments
+            {t('doctor.schedule')}
           </h2>
           <div className="space-y-2">
             {upcoming.map((a, i) => (
