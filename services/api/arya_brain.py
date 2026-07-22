@@ -34,8 +34,9 @@ def build_patient_context(patient_id: str) -> dict[str, Any]:
     appointments = [
         s.to_dict() for s in database.collection("appointments").stream()
         if (s.to_dict() or {}).get("patientId") == patient_id
-        and (s.to_dict() or {}).get("status") == "booked"
+        and (s.to_dict() or {}).get("status") in ("pending", "confirmed", "booked")
     ]
+    appointments.sort(key=lambda a: (a.get("date", ""), a.get("time", "")))
     care = next(
         (s.to_dict() for s in database.collection("careplans").stream()
          if (s.to_dict() or {}).get("patientId") == patient_id),
@@ -77,7 +78,13 @@ def context_summary(ctx: dict[str, Any]) -> str:
         if enc.get("summary"):
             lines.append(f"Past visit ({enc.get('startedAt','')[:10]}): {enc.get('summary')}")
     for appt in ctx.get("appointments", []):
-        lines.append(f"Upcoming appointment: {appt.get('scheduledAt')} — {appt.get('reason','')}")
+        lines.append(f"Upcoming appointment: {appt.get('date','')} {appt.get('time','')} — {appt.get('reason','')} [{appt.get('status','')}]")
+    # Uploaded documents (prescriptions/reports) — so the VOICE agent also reads
+    # them and the patient needn't re-explain their history.
+    doc = ctx.get("document", "")
+    if doc:
+        lines.append("Uploaded document(s) from the patient (treat as current, "
+                     "authoritative for meds/tests/dates):\n" + doc[:4000])
     return "\n".join(lines)
 
 
@@ -244,7 +251,9 @@ def execute_tool(name: str, args: dict, patient_id: str, ctx: dict) -> dict:
         appts = ctx.get("appointments", [])
         if not appts:
             return {"next": None}
-        return {"next": appts[0].get("scheduledAt"), "reason": appts[0].get("reason", "")}
+        a = appts[0]
+        return {"next": f"{a.get('date','')} {a.get('time','')}", "reason": a.get("reason", ""),
+                "status": a.get("status", "")}
 
     doctor_id = ctx.get("patient", {}).get("primaryDoctorId") or "doc-1"
 
@@ -270,12 +279,14 @@ def execute_tool(name: str, args: dict, patient_id: str, ctx: dict) -> dict:
         appt = {"id": appt_id, "orgId": ctx.get("patient", {}).get("orgId", "demo-org"),
                 "hospitalId": ctx.get("patient", {}).get("hospitalId"),
                 "patientId": patient_id, "patientName": ctx.get("patient", {}).get("name", "Patient"),
-                "doctorId": doctor_id, "date": date, "time": tm, "status": "booked",
+                "doctorId": doctor_id, "date": date, "time": tm, "status": "pending",
                 "reason": args.get("reason", "Follow-up"), "createdAt": _iso()}
         database.collection("appointments").document(appt_id).set(appt)
         _notify_doctor_booking(appt, ctx)
         audit("patient", "book_appointment", f"appointments/{appt_id}")
-        return {"booked": True, "date": date, "time": tm}
+        # Pending — tell the patient the doctor must confirm.
+        return {"booked": True, "status": "pending", "date": date, "time": tm,
+                "message": "Requested; the doctor will confirm shortly and you'll get an email."}
 
     if name == "reschedule_appointment":
         from calendar_slots import available_slots
@@ -295,28 +306,17 @@ def execute_tool(name: str, args: dict, patient_id: str, ctx: dict) -> dict:
 
 
 def _notify_doctor_booking(appt: dict, ctx: dict) -> None:
-    """Alert the assigned doctor + email the patient when Arya books by voice/chat."""
+    """Alert the assigned doctor that a voice/chat booking needs confirmation.
+    (The patient is emailed only once the doctor confirms.)"""
     database = db()
     alert_id = f"alert-{int(time.time()*1000)}"
     database.collection("alerts").document(alert_id).set(
         {"id": alert_id, "orgId": appt.get("orgId", "demo-org"), "severity": "info",
-         "kind": "appointment", "title": "New appointment booked (via Arya)",
-         "body": f"{appt.get('patientName','A patient')} booked {appt.get('date')} at {appt.get('time')}.",
-         "doctorId": appt.get("doctorId"), "patientRef": appt.get("patientId"), "createdAt": _iso()}
+         "kind": "appointment_pending", "title": "Appointment awaiting confirmation",
+         "body": f"{appt.get('patientName','A patient')} requested {appt.get('date')} at {appt.get('time')} via Arya. Confirm from your dashboard.",
+         "doctorId": appt.get("doctorId"), "patientRef": appt.get("patientId"),
+         "appointmentRef": appt.get("id"), "createdAt": _iso()}
     )
-    patient = ctx.get("patient", {})
-    if patient.get("email"):
-        try:
-            from integrations import send_email
-
-            send_email(
-                patient["email"],
-                f"Appointment confirmed — {appt.get('date')} at {appt.get('time')}",
-                f"<p>Namaste {patient.get('name','')},</p><p>Arya has booked your appointment for "
-                f"<b>{appt.get('date')} at {appt.get('time')}</b>.</p>",
-            )
-        except Exception:
-            pass
 
 
 def _resolve_day(text: str) -> str | None:
