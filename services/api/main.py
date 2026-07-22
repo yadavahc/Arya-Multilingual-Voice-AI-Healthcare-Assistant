@@ -8,6 +8,7 @@ are supplied.
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Optional
 
@@ -74,15 +75,16 @@ class TokenReq(BaseModel):
     name: str = ""
     role: str = "companion"  # companion | triage | scribe | adherence
     patientId: Optional[str] = None
+    language: str = "en"
 
 
 @app.post("/token")
 def token(req: TokenReq) -> dict:
-    # Encode role + patient id in metadata so the agent picks the right persona
-    # and prefetches the caller's context during the ringing state.
+    # Encode role + patient id + chosen language in metadata so the agent picks
+    # the right persona, prefetches context, and locks the voice to one language.
     import json as _json
 
-    meta = _json.dumps({"role": req.role, "patientId": req.patientId})
+    meta = _json.dumps({"role": req.role, "patientId": req.patientId, "language": req.language})
     jwt = create_token(req.room, req.identity, req.name, metadata=meta)
     return {"token": jwt, "url": get_settings().livekit_url, "room": req.room}
 
@@ -446,19 +448,26 @@ async def upload_document(patient_id: str, file: UploadFile = File(...)) -> dict
 
     data = await file.read()
     text = extract_text(file.filename or "upload", data)
-    save_document(patient_id, file.filename or "document", text)
+    record = save_document(patient_id, file.filename or "document", text)
     audit("patient", "upload_document", f"patients/{patient_id}")
-    return {"uploaded": True, "filename": file.filename, "chars": len(text),
-            "preview": text[:300]}
+    return {"uploaded": True, "filename": record["filename"], "type": record["type"],
+            "chars": record["chars"], "preview": text[:300]}
+
+
+@app.get("/patients/{patient_id}/documents")
+def list_patient_documents(patient_id: str) -> dict:
+    from documents import list_documents
+
+    return {"documents": list_documents(patient_id)}
 
 
 @app.get("/patients/{patient_id}/document")
 def get_document(patient_id: str) -> dict:
-    from documents import get_document_text
+    from documents import get_document_text, list_documents
 
-    snap = db().collection("documents").document(f"doc-{patient_id}").get()
-    meta = snap.to_dict() if snap.exists else None
-    return {"hasDocument": bool(meta), "filename": (meta or {}).get("filename"),
+    docs = list_documents(patient_id)
+    return {"hasDocument": bool(docs), "count": len(docs),
+            "filename": docs[0]["filename"] if docs else None,
             "chars": len(get_document_text(patient_id))}
 
 
@@ -473,7 +482,7 @@ class ChatReq(BaseModel):
 
 @app.post("/arya/chat")
 def arya_chat_endpoint(req: ChatReq) -> dict:
-    result = arya_chat(req.patientId, req.messages)
+    result = arya_chat(req.patientId, req.messages, forced_language=req.language)
 
     # Persist the running conversation so the doctor can track what was discussed.
     turns = [{"role": "arya" if m.get("role") == "assistant" else "patient",
@@ -677,6 +686,25 @@ async def payments_webhook(request: Request) -> dict:
     order_id = entity.get("order_id")
     audit("razorpay", "payment_webhook", f"payments/{order_id}")
     return {"received": True}
+
+
+# ── Twilio inbound voice → LiveKit SIP → Arya answers ───────────────────
+@app.post("/twilio/voice")
+@app.get("/twilio/voice")
+def twilio_voice() -> "Response":
+    """TwiML that bridges an inbound PSTN call to Arya on LiveKit SIP.
+    Point your Twilio number's Voice webhook at this URL (needs a public API)."""
+    from fastapi.responses import Response
+
+    sip_host = os.getenv("LIVEKIT_SIP_HOST", "arya-62mcncn2.sip.livekit.cloud")
+    number = get_settings().twilio_phone_number or "+19207686876"
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f'<Dial answerOnBridge="true"><Sip>sip:{number}@{sip_host}</Sip></Dial>'
+        "</Response>"
+    )
+    return Response(content=twiml, media_type="application/xml")
 
 
 # ── Availability (front-desk voice tool) ────────────────────────────────
