@@ -592,6 +592,89 @@ def get_document(patient_id: str) -> dict:
             "chars": len(get_document_text(patient_id))}
 
 
+# ── AI health features: medicine scan, symptom photo, diet, wearables ───
+@app.post("/patients/{patient_id}/verify-medicine")
+async def verify_medicine_endpoint(patient_id: str, file: UploadFile = File(...)) -> dict:
+    from health_ai import verify_medicine
+
+    ctx = build_patient_context(patient_id)
+    prescribed = []
+    for rx in ctx.get("prescriptions", []):
+        for d in rx.get("drugs", []):
+            prescribed.append({"name": d.get("name", ""), "salt": d.get("name", ""),
+                               "strength": d.get("strength", d.get("dose", ""))})
+    current = ctx.get("patient", {}).get("meds", []) + [d.get("name", "") for rx in ctx.get("prescriptions", []) for d in rx.get("drugs", [])]
+    data = await file.read()
+    result = verify_medicine(data, file.content_type or "image/jpeg", prescribed, current)
+    audit("patient", "verify_medicine", f"patients/{patient_id}")
+    return result
+
+
+@app.post("/patients/{patient_id}/detect-condition")
+async def detect_condition_endpoint(patient_id: str, file: UploadFile = File(...), note: str = "") -> dict:
+    from health_ai import detect_condition
+
+    data = await file.read()
+    result = detect_condition(data, file.content_type or "image/jpeg", note)
+    # High urgency → alert the doctor.
+    if result.get("urgency") == "urgent":
+        psnap = db().collection("patients").document(patient_id).get()
+        doctor_id = (psnap.to_dict() or {}).get("primaryDoctorId") if psnap.exists else None
+        db().collection("alerts").document(f"alert-{int(time.time()*1000)}").set(
+            {"id": f"alert-{int(time.time()*1000)}", "orgId": "demo-org", "severity": "warning",
+             "kind": "image_triage", "title": "Patient uploaded an urgent-looking condition photo",
+             "body": result.get("observation", "")[:200], "doctorId": doctor_id,
+             "patientRef": patient_id, "createdAt": _now_iso()})
+    audit("patient", "detect_condition", f"patients/{patient_id}")
+    return result
+
+
+@app.post("/patients/{patient_id}/diet-plan")
+def diet_plan_endpoint(patient_id: str) -> dict:
+    from health_ai import generate_diet
+
+    ctx = build_patient_context(patient_id)
+    plan = generate_diet(ctx.get("patient", {}), ctx.get("carePlan"), ctx.get("document", ""))
+    db().collection("dietplans").document(f"diet-{patient_id}").set(
+        {"patientId": patient_id, "plan": plan, "createdAt": _now_iso()})
+    return {"plan": plan}
+
+
+class WearableSync(BaseModel):
+    steps: Optional[float] = None
+    restingHeartRate: Optional[float] = None
+    spo2: Optional[float] = None
+    sleepHours: Optional[float] = None
+    source: str = "google_fit"
+
+
+@app.post("/wearables/{patient_id}/sync")
+def wearables_sync(patient_id: str, m: WearableSync) -> dict:
+    from health_ai import analyze_wearables
+
+    metrics = m.model_dump()
+    analysis = analyze_wearables(metrics)
+    db().collection("wearables").document(patient_id).set(
+        {"patientId": patient_id, "metrics": metrics, "analysis": analysis,
+         "syncedAt": _now_iso()}, merge=True)
+    # Notify doctor + patient on a high-severity reading (e.g. low SpO₂).
+    if analysis["status"] == "attention":
+        psnap = db().collection("patients").document(patient_id).get()
+        doctor_id = (psnap.to_dict() or {}).get("primaryDoctorId") if psnap.exists else None
+        db().collection("alerts").document(f"alert-{int(time.time()*1000)}").set(
+            {"id": f"alert-{int(time.time()*1000)}", "orgId": "demo-org", "severity": "warning",
+             "kind": "wearable", "title": "Abnormal wearable reading",
+             "body": "; ".join(a["message"] for a in analysis["alerts"]), "doctorId": doctor_id,
+             "patientRef": patient_id, "createdAt": _now_iso()})
+    return {"metrics": metrics, "analysis": analysis}
+
+
+@app.get("/wearables/{patient_id}")
+def wearables_get(patient_id: str) -> dict:
+    snap = db().collection("wearables").document(patient_id).get()
+    return snap.to_dict() or {"metrics": {}, "analysis": {"alerts": [], "status": "good"}}
+
+
 # ── Arya conversational brain (text now; same logic powers voice) ───────
 class ChatReq(BaseModel):
     patientId: str

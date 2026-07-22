@@ -138,6 +138,16 @@ def seed() -> dict:
          ]}
     )
 
+    # ── Wearable data (synced from Google Fit / Fire-Boltt) ─────────────
+    d.collection("wearables").document("pat-1").set(
+        {"patientId": "pat-1", "source": "google_fit",
+         "metrics": {"steps": 1450, "restingHeartRate": 88, "spo2": 93, "sleepHours": 5.2},
+         "analysis": {"status": "attention", "alerts": [
+             {"metric": "SpO₂", "value": "93%", "level": "high", "message": "Low blood oxygen (93%). If you feel breathless, seek care."},
+             {"metric": "Sleep", "value": "5.2 h", "level": "low", "message": "Only 5.2 h of sleep — aim for 7–8 hours."},
+         ]}, "syncedAt": _now_iso(-60)}
+    )
+
     # ── Glossary — locked medical terms in the 4 supported languages ────
     glossary = {
         "hypertension": {"hi": "उच्च रक्तचाप", "kn": "ಅಧಿಕ ರಕ್ತದೊತ್ತಡ", "ta": "உயர் இரத்த அழுத்தம்"},
