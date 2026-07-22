@@ -265,7 +265,11 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("user_input_transcribed")
     def _on_user_transcript(ev) -> None:
-        # Runs on final transcript deltas. Cheap language tag + red-flag scan.
+        # This fires repeatedly with growing INTERIM transcripts as the user
+        # speaks, then once with the final sentence. Only act on the final one —
+        # otherwise the transcript fills with partial duplicates.
+        if not getattr(ev, "is_final", True):
+            return
         text = getattr(ev, "transcript", "") or ""
         if not text.strip():
             return
