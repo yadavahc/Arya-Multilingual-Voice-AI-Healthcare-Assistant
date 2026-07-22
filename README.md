@@ -10,6 +10,8 @@
 
 `OpenAI` · `Sarvam AI` · `LiveKit` · `Twilio` · `Firebase` · `Next.js 15` · `FastAPI` · `LangGraph`
 
+🌐 **[Live demo →](https://arya-multilingual-voice-ai-healthca.vercel.app)** &nbsp;•&nbsp; 🔑 Patient `8904030441` · Doctor `9481479268` · code `123456`
+
 </div>
 
 ---
@@ -59,6 +61,19 @@ Arya is a voice‑first clinical companion with **two connected experiences** un
 | 🚨 **Red‑flag triage** | A sub‑millisecond safety classifier on every turn escalates emergencies (chest pain, stroke signs, self‑harm) to the on‑call doctor mid‑conversation. |
 | 🔐 **Google sign‑in + hospital model** | Separate patient/doctor portals; same‑hospital patients and doctors are auto‑connected. |
 | 🎨 **Premium UI** | A **Three.js** animated hero, framer‑motion micro‑interactions, a polished teal medical‑infrastructure theme, and a beautiful full‑screen **voice‑call surface**. |
+
+---
+
+## 🧬 AI Health Tools *(new)*
+
+A suite of **computer‑vision and AI health features** on the patient dashboard:
+
+| Tool | What it does |
+|---|---|
+| 💊 **Smart Medicine Verification** | Snap a photo of a medicine strip → OpenAI **vision** identifies the medicine, salt, strength & purpose, then **cross‑checks it against the prescription**, warns about **expired** medicines, flags **duplicate** medications, and explains **when & how to take it**. |
+| 🩹 **Disease Detection from Images** | Upload a photo of a rash, burn, eye infection, or swelling → Arya gives a **preliminary AI assessment**, likely conditions, an **urgency level**, and next‑step advice — always with a clear *"not a diagnosis, consult a doctor"* disclaimer. Urgent cases auto‑alert the doctor. |
+| 🥗 **Personalized Diet Generator** | From the patient's conditions and uploaded reports (diabetes, hypertension, kidney disease, pregnancy…), Arya builds a **daily diet plan** — breakfast/lunch/dinner, **calorie, protein & water targets**, and foods to avoid — culturally tailored for Indian patients. |
+| ⌚ **Wearable Health Monitoring** | Syncs activity, heart rate, sleep and **SpO₂** (Google Fit / Health Connect from a Fire‑Boltt watch), **detects abnormal readings** (low SpO₂, high resting HR, poor sleep), and **notifies the patient and doctor** when something's off. |
 
 ---
 
@@ -135,6 +150,8 @@ Arya is a voice‑first clinical companion with **two connected experiences** un
 3. Taps **Call Arya**, asks *"ನನ್ನ ಮಾತ್ರೆ ಯಾವಾಗ ತೆಗೆದುಕೊಳ್ಳಬೇಕು?"* → Arya answers from his real schedule, in Kannada.
 4. Says *"Book an appointment for Monday"* → Arya offers 3 slots → books it → *"pending doctor confirmation."*
 
+4b. Opens **AI Health Tools** → snaps a photo of a medicine strip (verified against his Rx), uploads a rash photo for a preliminary read, and generates a **diabetic‑friendly diet plan**.
+
 **Doctor (Dr. Aisha Rao — Cardiology):**
 5. Sees the **pending request** → clicks **Confirm** → Ramesh gets an **email + notification**.
 6. Opens **Call Reviews** → reads the AI summary, transcript, and insights of Ramesh's conversation → rates Arya 👍.
@@ -189,9 +206,9 @@ arya/
 
 ## ✅ What's real vs. roadmap
 
-**Fully functional & demoable today:** multilingual chat + voice, document upload & RAG, voice/UI appointment booking with doctor approval + real confirmation emails, doctor call‑review + feedback, red‑flag triage, Google/phone auth, hospital connection, 3D landing, full‑site i18n, SOAP‑note pipeline.
+**Fully functional & demoable today:** multilingual chat + voice, document upload & RAG, **medicine verification & disease detection from images (vision)**, **personalized diet generator**, **wearable abnormal‑reading alerts**, voice/UI appointment booking with **doctor approval + real confirmation emails**, doctor call‑review + feedback, red‑flag triage, Google/phone auth, hospital connection, 3D landing, full‑site i18n, SOAP‑note pipeline. **Deployed on Vercel (web) + Render (API) with live Firestore.**
 
-**Wired, needs an upgrade to go fully live:** inbound PSTN calling works end‑to‑end to the agent; the Twilio→LiveKit SIP bridge needs a **paid Twilio account** (trial blocks external SIP). Email sends to any address once a domain is verified in Resend.
+**Wired, needs an upgrade / account to go fully live:** inbound PSTN calling works end‑to‑end to the agent; the Twilio→LiveKit SIP bridge needs a **paid Twilio account** (trial blocks external SIP). Email sends to any address once a domain is verified in Resend. Wearables use a sync endpoint + abnormal‑detection engine that's fully built; the **Google Fit OAuth pull** is the remaining connect step.
 
 ---
 
