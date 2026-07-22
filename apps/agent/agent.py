@@ -82,18 +82,26 @@ def _build_session(ctx: JobContext, detected_language: str) -> AgentSession:
             # STT locked to the chosen language — faster + more accurate than
             # auto-detect, which removes noticeable lag while Arya listens.
             stt = sarvam.STT(language=sarvam_lang, model="saarika:v2.5")
-            # Bulbul TTS in the same language for a clear, natural voice.
-            # anushka requires bulbul:v2 (v3 uses a different speaker set).
+            # Bulbul TTS in the same language. enable_preprocessing normalizes
+            # numbers + mixed English so pronunciation (esp. Kannada) is natural.
             tts = sarvam.TTS(
                 target_language_code=sarvam_lang,
                 speaker="anushka",
                 model="bulbul:v2",
+                enable_preprocessing=True,
+                pace=1.05,
             )
-            llm = openai.LLM(model=os.getenv("OPENAI_NOTES_MODEL", "gpt-4.1-mini"))
-            kwargs: dict = {"stt": stt, "llm": llm, "tts": tts, "vad": vad}
+            llm = openai.LLM(model=os.getenv("OPENAI_NOTES_MODEL", "gpt-4.1-mini"), temperature=0.4)
+            kwargs: dict = {
+                "stt": stt, "llm": llm, "tts": tts, "vad": vad,
+                # Start composing the reply before the user fully stops → less lag.
+                "preemptive_generation": True,
+                # Snappier turn-taking for a real-time feel.
+                "min_endpointing_delay": 0.4,
+            }
             if _HAS_TURN_DETECTOR:
                 kwargs["turn_detection"] = MultilingualModel()
-            logger.info("voice pipeline: Sarvam STT+TTS (Indian languages)")
+            logger.info("voice pipeline: Sarvam STT+TTS (%s, preemptive)", sarvam_lang)
             return AgentSession(**kwargs)
         except Exception as exc:  # pragma: no cover
             logger.warning("Sarvam pipeline unavailable (%s); using OpenAI Realtime", exc)
@@ -208,8 +216,11 @@ async def entrypoint(ctx: JobContext) -> None:
     lang_name = _LANG_FULL.get(fixed_language, "English")
     instructions = build_instructions(role=role, patient_summary=patient_summary)
     instructions = (
-        f"IMPORTANT: Speak ONLY in {lang_name}. Every reply must be in "
-        f"{lang_name}, regardless of the language the patient uses.\n\n" + instructions
+        f"IMPORTANT: Speak ONLY in {lang_name}, in natural, everyday spoken "
+        f"{lang_name} using its native script. Do NOT mix in English words except "
+        "for unavoidable medicine/brand names. Keep sentences short and "
+        "conversational for smooth, natural text-to-speech. Every reply must be "
+        f"in {lang_name} regardless of the language the patient uses.\n\n" + instructions
     )
     if glossary_block:
         instructions = f"{instructions}\n\n{glossary_block}"
