@@ -10,7 +10,7 @@ import { api } from './api';
  */
 export function useVoiceRoom(
   role: 'companion' | 'triage' | 'scribe' = 'scribe',
-  opts: { patientId?: string | null; identity?: string } = {},
+  opts: { patientId?: string | null; identity?: string; language?: string } = {},
 ) {
   const roomRef = useRef<Room | null>(null);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'error' | 'unconfigured'>(
@@ -27,6 +27,7 @@ export function useVoiceRoom(
         name: opts.identity || role,
         role,
         patientId: opts.patientId ?? undefined,
+        language: opts.language ?? 'en',
       });
       if (!url || token.startsWith('DEV_TOKEN')) {
         setStatus('unconfigured');

@@ -52,8 +52,15 @@ REALTIME_MODEL = os.getenv("OPENAI_REALTIME_MODEL", "gpt-realtime")
 
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 
-# Sarvam language codes for the 4 supported languages.
-_SARVAM_LANG = {"en": "en-IN", "hi": "hi-IN", "kn": "kn-IN", "ta": "ta-IN"}
+# Sarvam language codes + full names for the supported languages.
+_SARVAM_LANG = {
+    "en": "en-IN", "hi": "hi-IN", "kn": "kn-IN", "ta": "ta-IN", "te": "te-IN",
+    "ml": "ml-IN", "mr": "mr-IN", "bn": "bn-IN", "gu": "gu-IN", "pa": "pa-IN", "or": "od-IN",
+}
+_LANG_FULL = {
+    "en": "English", "hi": "Hindi", "kn": "Kannada", "ta": "Tamil", "te": "Telugu",
+    "ml": "Malayalam", "mr": "Marathi", "bn": "Bengali", "gu": "Gujarati", "pa": "Punjabi", "or": "Odia",
+}
 
 
 def prewarm(proc: JobProcess) -> None:
@@ -71,12 +78,14 @@ def _build_session(ctx: JobContext, detected_language: str) -> AgentSession:
         try:
             from livekit.plugins import sarvam
 
-            # Saarika STT with auto language detection across en/hi/kn/ta.
-            stt = sarvam.STT(language="unknown", model="saarika:v2.5")
-            # Bulbul TTS — natural Indian-language voice; starts in the caller's lang.
+            sarvam_lang = _SARVAM_LANG.get(detected_language, "en-IN")
+            # STT locked to the chosen language — faster + more accurate than
+            # auto-detect, which removes noticeable lag while Arya listens.
+            stt = sarvam.STT(language=sarvam_lang, model="saarika:v2.5")
+            # Bulbul TTS in the same language for a clear, natural voice.
             # anushka requires bulbul:v2 (v3 uses a different speaker set).
             tts = sarvam.TTS(
-                target_language_code=_SARVAM_LANG.get(detected_language, "hi-IN"),
+                target_language_code=sarvam_lang,
                 speaker="anushka",
                 model="bulbul:v2",
             )
@@ -97,29 +106,31 @@ def _build_session(ctx: JobContext, detected_language: str) -> AgentSession:
     return AgentSession(**kwargs)
 
 
-def _parse_metadata(ctx: JobContext) -> tuple[str, Optional[str]]:
-    """Return (role, patient_id) from job metadata.
+def _parse_metadata(ctx: JobContext) -> tuple[str, Optional[str], str]:
+    """Return (role, patient_id, language) from job metadata.
 
-    Metadata may be JSON ({"role","patientId"}) from the token/dispatch, or a
-    bare keyword string. Defaults to the care-companion persona for a patient
-    calling their doctor's line.
+    Metadata may be JSON ({"role","patientId","language"}) from the token/
+    dispatch, or a bare keyword string. Defaults to the companion persona and
+    English. A fixed language keeps the voice clear and low-latency (no
+    per-turn re-detection).
     """
     import json
 
     raw = ctx.job.metadata or ""
-    role, patient_id = "companion", None
     try:
         data = json.loads(raw)
-        role = (data.get("role") or "companion").lower()
-        patient_id = data.get("patientId")
-        return role, patient_id
+        return (
+            (data.get("role") or "companion").lower(),
+            data.get("patientId"),
+            (data.get("language") or "en").lower(),
+        )
     except Exception:
         pass
     meta = raw.lower()
     for r in ("scribe", "adherence", "triage", "companion"):
         if r in meta:
-            return r, None
-    return "companion", None
+            return r, None, "en"
+    return "companion", None, "en"
 
 
 async def _prefetch_patient_context(
@@ -153,11 +164,11 @@ async def _prefetch_patient_context(
 async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
-    role, meta_patient_id = _parse_metadata(ctx)
+    role, meta_patient_id, fixed_language = _parse_metadata(ctx)
 
     # For browser (and SIP) calls, the caller's access token carries
-    # {role, patientId} as participant metadata. Read it so Arya loads the right
-    # patient's context before greeting.
+    # {role, patientId, language} as participant metadata. Read it so Arya loads
+    # the right patient's context and locks the voice language before greeting.
     try:
         import json as _json
 
@@ -167,6 +178,8 @@ async def entrypoint(ctx: JobContext) -> None:
             meta_patient_id = pmeta["patientId"]
         if pmeta.get("role"):
             role = str(pmeta["role"]).lower()
+        if pmeta.get("language"):
+            fixed_language = str(pmeta["language"]).lower()
     except Exception:
         pass
 
@@ -183,20 +196,27 @@ async def entrypoint(ctx: JobContext) -> None:
         store.save(seed_state)
 
     state, patient_summary = await _prefetch_patient_context(store, session_id, role)
+    # Lock the conversation to the language the user chose on the website.
+    state.detected_language = fixed_language
+    store.save(state)
 
     # Glossary injection at prompt time (locked medical-term translations).
     glossary = Glossary(API_BASE_URL)
     await glossary.load()
-    glossary_block = glossary.as_prompt_block(state.detected_language)
+    glossary_block = glossary.as_prompt_block(fixed_language)
 
+    lang_name = _LANG_FULL.get(fixed_language, "English")
     instructions = build_instructions(role=role, patient_summary=patient_summary)
+    instructions = (
+        f"IMPORTANT: Speak ONLY in {lang_name}. Every reply must be in "
+        f"{lang_name}, regardless of the language the patient uses.\n\n" + instructions
+    )
     if glossary_block:
         instructions = f"{instructions}\n\n{glossary_block}"
 
-    # Pick the voice pipeline. Sarvam (STT→LLM→TTS) gives natural Hindi / Kannada /
-    # Tamil voices; it's preferred for Indian languages. If no Sarvam key, fall
-    # back to OpenAI Realtime (native speech-to-speech, strong English/Hindi).
-    session = _build_session(ctx, state.detected_language)
+    # Sarvam (STT→LLM→TTS) locked to the chosen language for clear, natural, low-
+    # latency voice. Falls back to OpenAI Realtime if no Sarvam key.
+    session = _build_session(ctx, fixed_language)
 
     tools = build_tools(
         org_id=state.org_id or "demo-org",
@@ -331,8 +351,8 @@ async def entrypoint(ctx: JobContext) -> None:
     if role != "scribe":
         await session.generate_reply(
             instructions=(
-                "Greet the caller warmly in Hindi and English (a natural Hinglish "
-                "mix), say you're Arya, and ask how you can help — one short sentence."
+                f"Greet the caller warmly in {lang_name}, say you're Arya, and ask "
+                "how you can help — one short sentence, in that language only."
             )
         )
 
