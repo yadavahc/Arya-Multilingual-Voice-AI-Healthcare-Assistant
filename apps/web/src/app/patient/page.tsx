@@ -51,6 +51,8 @@ function PatientCare() {
 
       <DocumentHistory patientId={patientId} />
 
+      <ChatHistory patientId={patientId} />
+
       <section className="mt-8">
         <h2 className="text-xl font-semibold text-teal-900">{t('patient.medicines')}</h2>
         <div className="mt-3 space-y-3">
@@ -117,6 +119,41 @@ function DocumentHistory({ patientId }: { patientId: string }) {
               <p className="text-xs text-teal-500 capitalize">{(d.type || 'document').replace('_', ' ')} · {(d.uploadedAt || '').slice(0, 10)}</p>
             </div>
           </motion.div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ChatHistory({ patientId }: { patientId: string }) {
+  const t = useT();
+  const [open, setOpen] = useState<string | null>(null);
+  const { data } = useQuery({ queryKey: ['conversations', patientId], queryFn: () => api.conversations(patientId) });
+  const convs = (data?.conversations ?? []).filter((c: any) => (c.turns || []).length > 0);
+  if (convs.length === 0) return null;
+  return (
+    <section className="mt-8">
+      <h2 className="text-xl font-semibold text-teal-900">{t('patient.history')}</h2>
+      <div className="mt-3 space-y-2">
+        {convs.map((c: any) => (
+          <div key={c.id} className="rounded-xl bg-white p-3 shadow-card">
+            <button className="flex w-full items-center justify-between text-left" onClick={() => setOpen(open === c.id ? null : c.id)}>
+              <div>
+                <p className="text-sm text-teal-900">{c.summary || `${c.channel} conversation`}</p>
+                <p className="text-xs text-teal-500 capitalize">{c.channel} · {(c.startedAt || '').slice(0, 16).replace('T', ' ')}</p>
+              </div>
+              <span className="text-teal-400">{open === c.id ? '▲' : '▼'}</span>
+            </button>
+            {open === c.id && (
+              <div className="mt-2 max-h-52 space-y-1 overflow-y-auto rounded-lg bg-cream-100 p-3">
+                {(c.turns || []).map((turn: any, i: number) => (
+                  <p key={i} className={`text-sm ${turn.role === 'arya' ? 'text-teal-700' : 'text-teal-900'}`}>
+                    <b className="capitalize">{turn.role}:</b> {turn.text}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </section>

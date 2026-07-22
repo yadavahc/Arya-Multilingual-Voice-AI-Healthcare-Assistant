@@ -3,11 +3,13 @@ import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useT } from '@/lib/i18n';
 
 /** Patient-facing scheduling calendar. Shows the doctor's real open slots and
  * books into the same calendar the doctor sees. */
 export function BookingCalendar({ patientId, doctorId }: { patientId: string; doctorId: string }) {
   const qc = useQueryClient();
+  const t = useT();
   const days = useMemo(() => {
     const out: { date: string; label: string; dow: string }[] = [];
     for (let i = 1; i <= 14; i++) {
@@ -47,8 +49,8 @@ export function BookingCalendar({ patientId, doctorId }: { patientId: string; do
 
   return (
     <section className="mt-6 rounded-3xl bg-white p-5 shadow-card">
-      <h2 className="text-lg font-semibold text-teal-900">Book an appointment</h2>
-      <p className="text-sm text-teal-600">Pick a day, then an open time with your doctor.</p>
+      <h2 className="text-lg font-semibold text-teal-900">{t('patient.book')}</h2>
+      <p className="text-sm text-teal-600">{t('patient.pickDay')}</p>
 
       {/* Day strip */}
       <div className="mt-4 flex gap-2 overflow-x-auto pb-2">
