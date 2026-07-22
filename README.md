@@ -1,267 +1,212 @@
-# Arya — Multilingual Voice AI Clinical Companion
+<div align="center">
 
-Arya is a healthcare voice-AI platform. Patients call in and **Arya answers first**
-— an AI companion that knows their history, medications, and care plan, and holds a
-natural, low-latency conversation in their own language. She answers questions about
-medicines, diet, rest and follow-up care, and can **book, reschedule or negotiate
-appointments on her own** — no human needed for routine calls. For clinicians, Arya
-ambiently scribes consultations into SOAP notes, flags red-flag emergencies, and
-surfaces missing questions during the visit.
+# 🩺 Arya — Multilingual Voice AI Clinical Companion
 
-Separate sign-in portals keep the two worlds apart: **patients** talk to Arya;
-**clinicians** get the live consult, call console and analytics.
+### Patients call. Arya answers — in their language, with their history, in under a second.
 
----
+*An end‑to‑end healthcare voice‑AI platform: patients talk to an AI that knows their prescriptions and medical history, books their appointments by voice, and answers questions about their uploaded reports — in English, Hindi, Kannada, Tamil, Telugu and more. Doctors get every conversation transcribed, summarised, and reviewable.*
 
-## Table of contents
+**Built for the OneInbox Hackathon.**
 
-- [Architecture](#architecture)
-- [Repo layout](#repo-layout)
-- [Quick start](#quick-start)
-- [Signing in (demo)](#signing-in-demo)
-- [Enabling live voice](#enabling-live-voice)
-- [Configuration & keys](#configuration--keys)
-- [Data model](#data-model)
-- [How Arya works](#how-arya-works)
-- [Latency engineering](#latency-engineering)
-- [Security notes](#security-notes)
+`OpenAI` · `Sarvam AI` · `LiveKit` · `Twilio` · `Firebase` · `Next.js 15` · `FastAPI` · `LangGraph`
+
+</div>
 
 ---
 
-## Architecture
+## 🎯 The problem
+
+Healthcare in India is bottlenecked by **language, literacy, and doctor time**:
+
+- A patient who speaks only **Kannada or Tamil** can't easily get their questions answered.
+- Elderly and low‑literacy patients **forget medication timings** and can't read prescriptions.
+- Front desks are overwhelmed with *"when's my appointment?"* and *"which tablet do I take?"* calls.
+- Doctors spend hours on **documentation** instead of care, and have **no record** of what patients were told between visits.
+
+**Arya fixes all of this with one thing patients already know how to use — a phone call.**
+
+---
+
+## 💡 What Arya does
+
+Arya is a voice‑first clinical companion with **two connected experiences** under one hospital:
+
+### 👤 For patients
+- **Call Arya** (voice) or **chat** — in your own language. Arya already knows you.
+- Ask *"When do I take my BP tablet?"*, *"What should I eat?"*, *"When is my next appointment?"* — accurate answers from **your real prescription and care plan**.
+- **Upload a prescription / lab report (PDF/DOC)** and ask questions about it — no need to re‑explain your history.
+- **Book an appointment entirely by voice** — *"Book me for Monday morning"* → Arya offers open slots, confirms, and requests it. No forms.
+- See your **medicines, appointments, documents, and full chat history** — any time.
+
+### 🩺 For doctors
+- A dashboard of **your patients** (same hospital), each with prescription, vitals, history, and care plan.
+- **Every Arya conversation** — voice and chat — is **transcribed, summarised, and given AI insights** (topics, actions taken, follow‑up needed, red flags, *and where Arya may have answered wrong*).
+- **Approve or decline** appointment requests — the patient is instantly notified and **emailed a confirmation**.
+- **Rate Arya's answers** (👍/👎 + notes) to track and improve AI performance over time.
+
+---
+
+## ✨ Standout features (all functional)
+
+| Feature | What it does |
+|---|---|
+| 🌐 **True multilingual voice** | Auto‑natural speech in **English, Hindi, Kannada, Tamil, Telugu** (+ 6 more for chat) via **Sarvam AI** — purpose‑built for Indian languages. Pick a language once; the *entire app + Arya* switch to it. |
+| 🧠 **Context‑aware agent** | On every call, Arya loads the patient's **medications, care plan, vitals, past visits, and uploaded documents** *before greeting* — so patients never re‑explain themselves. |
+| 📄 **Document Q&A (RAG)** | Upload a prescription or lab report; ask about it in any language. Arya reads it, treats it as the current source of truth, and **extracts meds/conditions into the patient's history** automatically. |
+| 📅 **Voice appointment booking** | Book / reschedule entirely by speaking. Doctors define **3 slots/day**; bookings are **Pending → Doctor‑approved → Confirmed**, with a **confirmation email** (date, slot, doctor, hospital). |
+| 📞 **Real phone line** | Patients dial a hospital number → Twilio → LiveKit SIP → Arya answers, identifying the caller by **caller‑ID** and loading their history. |
+| 👩‍⚕️ **Doctor call‑review + feedback** | SOAP‑style summary, transcript, duration, AI insights, and a feedback loop to correct/improve Arya. |
+| 🚨 **Red‑flag triage** | A sub‑millisecond safety classifier on every turn escalates emergencies (chest pain, stroke signs, self‑harm) to the on‑call doctor mid‑conversation. |
+| 🔐 **Google sign‑in + hospital model** | Separate patient/doctor portals; same‑hospital patients and doctors are auto‑connected. |
+| 🎨 **Premium UI** | A **Three.js** animated hero, framer‑motion micro‑interactions, a polished teal medical‑infrastructure theme, and a beautiful full‑screen **voice‑call surface**. |
+
+---
+
+## 🏗️ Architecture
 
 ```
                     ┌──────────────────────────────────────────────┐
-   PSTN call ──────▶│ Twilio / Exotel → LiveKit SIP bridge          │
-   Browser mic ────▶│ LiveKit WebRTC                                │
+   📞 PSTN call ───▶│ Twilio number → Vercel TwiML → LiveKit SIP    │
+   🎙️ Browser mic ─▶│ LiveKit WebRTC                                │
                     └───────────────┬──────────────────────────────┘
                                     ▼
-                    apps/agent  (Python · LiveKit Agents)
-                    OpenAI Realtime API — native speech-to-speech
-                    · companion persona (answers as the doctor)
-                    · language mirroring (no detection pass)
-                    · full patient-context prefetch on ring
-                    · care + scheduling tools · red-flag triage
-                                    │  HTTP (same brain as chat)
-                                    ▼
-                    services/api  (FastAPI + LangGraph)
-                    · /arya/chat  — context-aware conversation + tools
-                    · /auth/resolve — phone → role/patient (portals)
-                    · SOAP notes · gap detection · escalation
-                    · appointments · payments · analytics
-                                    │
-              ┌─────────────────────┼─────────────────────┐
-              ▼                     ▼                      ▼
-       Firestore + Auth      Upstash Redis          functions/ (triggers
-       (PHI, audited)        (session/context)       + webhooks + FCM)
-                                    │
-                                    ▼
-                    apps/web  (Next.js 15)
-                    · /login  — doctor & patient portals
-                    · /patient — call Arya + live chat + care
-                    · /consult · /console · /admin (clinician)
+                 apps/agent  ·  Python · LiveKit Agents (India South)
+                 ┌────────────────────────────────────────────────┐
+                 │ Sarvam STT  →  GPT‑4.1  →  Sarvam TTS (Bulbul)  │
+                 │ · language locked per call (clear, low‑latency) │
+                 │ · caller‑ID → patient · prefetch full context   │
+                 │ · care + scheduling tools · red‑flag triage     │
+                 │ · warm process pool (instant pickup)            │
+                 └───────────────────────┬────────────────────────┘
+                                         │  one shared brain (HTTP)
+                                         ▼
+                 services/api  ·  FastAPI + LangGraph
+                 /arya/chat · /auth · SOAP notes · calendar ·
+                 appointments · documents(RAG) · call insights ·
+                 payments · email · telephony
+                                         │
+              ┌───────────────────────────┼───────────────────────────┐
+              ▼                           ▼                           ▼
+        Firestore + Auth            Sarvam / OpenAI              Twilio + Resend
+        (PHI, audit log)            (voice + LLM)                (calls + email)
+                                         │
+                                         ▼
+                 apps/web  ·  Next.js 15  ·  Vercel
+                 Landing (3D) · Patient app · Doctor dashboard ·
+                 Call reviews · Language selector · Onboarding
 ```
 
-The key idea: **`/arya/chat` and the voice agent share one brain.** The chat path
-works today (text, OpenAI), and the voice agent runs the same context + tools over
-audio the moment LiveKit keys are present.
+**Key idea — one brain, three surfaces.** The same context‑aware reasoning powers **voice calls, phone calls, and text chat**. Add a Sarvam key and it speaks; add a Twilio number and it answers the phone.
 
 ---
 
-## Repo layout
+## 🧰 Tech stack
 
-| Path | What |
+| Layer | Technology |
 |---|---|
-| `apps/web` | Next.js 15 frontend — portals, patient app, clinician screens |
-| `apps/agent` | Python LiveKit + OpenAI Realtime voice agent |
-| `services/api` | FastAPI + LangGraph — Arya brain, notes, auth, integrations |
-| `functions` | Firebase Cloud Functions — webhooks, Firestore triggers |
-| `packages/shared` | Shared TypeScript types (the data model) |
-| `infra` | Firestore rules/indexes, Dockerfiles, telephony + deploy docs |
-
-Key backend files:
-
-- `services/api/arya_brain.py` — patient-context builder, tool schema, chat loop
-- `services/api/main.py` — all HTTP endpoints
-- `services/api/graphs/` — LangGraph SOAP + gap-detection pipelines
-- `apps/agent/agent.py` — LiveKit entrypoint, Realtime session, latency metrics
-- `apps/agent/prompts.py` — role prompts (companion / triage / scribe)
+| **Voice** | **Sarvam AI** (Saarika STT + Bulbul TTS, Indian languages) · **OpenAI Realtime** (fallback) |
+| **Orchestration** | **LiveKit Agents** (Python) · Silero VAD · warm process pool |
+| **Telephony** | **Twilio** Programmable Voice → LiveKit **SIP** |
+| **AI / reasoning** | **OpenAI GPT‑4.1** · **LangGraph** (SOAP notes, gap detection) · function‑calling tools |
+| **Frontend** | **Next.js 15** (App Router, TS) · Tailwind · **Framer Motion** · **Three.js** · TanStack Query · Zustand |
+| **Backend** | **FastAPI** · Firebase Admin |
+| **Data / auth** | **Firebase** Firestore + Google/Phone Auth · field‑level audit logging |
+| **Email** | **Resend** (appointment confirmations) |
+| **Deploy** | **Vercel** (web) · Cloud Run / Docker (api + agent) |
 
 ---
 
-## Quick start
+## 🌍 How the language magic works
 
-Three terminals. Python 3.11–3.12 recommended for the agent (audio deps).
+1. The user picks a language once (top‑of‑site selector, default English).
+2. That choice **locks the whole experience** — UI strings, chatbot, and the **voice agent's STT + TTS** — to that language.
+3. **Sarvam** handles Indian‑language speech natively (Saarika transcribes, Bulbul speaks) — far more natural for Kannada/Tamil than generic TTS.
+4. A locked medical glossary keeps clinical terms accurate across languages.
 
-### 1) API — clinical brain + integrations
+*Result: a Kannada‑speaking grandmother has the same fluent, natural conversation an English speaker does.*
+
+---
+
+## 🎬 The demo journey
+
+**Patient (Ramesh Kumar — hypertension + diabetes):**
+1. Signs in → picks **ಕನ್ನಡ / हिन्दी** → the whole app switches language.
+2. Uploads `samples/prescription-ramesh-kumar.pdf` in chat.
+3. Taps **Call Arya**, asks *"ನನ್ನ ಮಾತ್ರೆ ಯಾವಾಗ ತೆಗೆದುಕೊಳ್ಳಬೇಕು?"* → Arya answers from his real schedule, in Kannada.
+4. Says *"Book an appointment for Monday"* → Arya offers 3 slots → books it → *"pending doctor confirmation."*
+
+**Doctor (Dr. Aisha Rao — Cardiology):**
+5. Sees the **pending request** → clicks **Confirm** → Ramesh gets an **email + notification**.
+6. Opens **Call Reviews** → reads the AI summary, transcript, and insights of Ramesh's conversation → rates Arya 👍.
+
+> 🔑 **Demo logins** — Patient `8904030441` · Doctor `9481479268` · code `123456` (or Google sign‑in).
+> Both belong to **Oxford Health Multispeciality, Bengaluru**, so they're auto‑connected.
+
+---
+
+## 🚀 Run it locally
+
+Three terminals. (Python 3.11–3.12 recommended for the agent.)
 
 ```bash
-cd services/api
-python -m venv .venv
-# Windows:  .venv\Scripts\activate    |  macOS/Linux:  source .venv/bin/activate
+# 1) API — the brain
+cd services/api && python -m venv .venv && . .venv/Scripts/activate
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8080
-# → http://localhost:8080/health
-```
+uvicorn main:app --reload --port 8080          # → http://localhost:8080/health
 
-Add keys in `services/api/.env` (see [Configuration](#configuration--keys)). With no
-keys, `/health` reports `{"store":"memory","llm":false}` and everything still runs on
-fallbacks. With an OpenAI key + Firebase service account it becomes
-`{"store":"firestore","llm":true}`.
+# 2) Web — the app
+npm install
+npm run dev                                     # → http://localhost:3000
 
-### 2) Web — the app
-
-```bash
-npm install                              # from the repo root (workspaces)
-cp apps/web/.env.local.example apps/web/.env.local   # then fill in values
-npm run dev                              # → http://localhost:3000
-```
-
-### 3) Agent — the voice brain (optional; needs LiveKit + OpenAI keys)
-
-```bash
-cd apps/agent
-python -m venv .venv && . .venv/Scripts/activate     # or source .venv/bin/activate
+# 3) Voice agent (needs OpenAI + LiveKit + Sarvam keys)
+cd apps/agent && python -m venv .venv && . .venv/Scripts/activate
 pip install -r requirements.txt
-python agent.py download-files           # one-time model weights
-python agent.py dev                      # registers a worker with LiveKit Cloud
+python agent.py download-files
+python agent.py dev                             # registers a worker with LiveKit
+```
+
+Keys live in `services/api/.env`, `apps/agent/.env`, `apps/web/.env.local` (all git‑ignored; templates in `.env.example`). With no keys the app still runs offline on an in‑memory store + heuristic fallbacks.
+
+### Enabling the phone line
+Twilio number → Vercel TwiML (`/api/twilio/voice`) → LiveKit SIP → agent. The SIP trunk + dispatch rule are created; point the number at the webhook with `infra/configure_twilio.py`. Details in `infra/phone-setup.md`.
+
+---
+
+## 📦 Repo layout
+
+```
+arya/
+├── apps/web/          Next.js 15 — landing (3D), patient app, doctor dashboard, call reviews
+├── apps/agent/        Python LiveKit + Sarvam/OpenAI voice agent (the "brain" over audio)
+├── services/api/      FastAPI + LangGraph — chat brain, calendar, documents, notes, email, telephony
+├── functions/         Firebase Cloud Functions (webhooks, triggers)
+├── packages/shared/   Shared TypeScript types
+├── samples/           Dummy prescription + patient PDFs for testing document Q&A
+└── infra/             Firestore rules, Dockerfiles, phone-setup + deploy guides
 ```
 
 ---
 
-## Signing in (demo)
+## ✅ What's real vs. roadmap
 
-The demo uses a simplified login: enter a phone number, then the code **`123456`**.
-The number determines the role (this is the real logic; the OTP is stubbed for
-convenience). Seeded accounts:
+**Fully functional & demoable today:** multilingual chat + voice, document upload & RAG, voice/UI appointment booking with doctor approval + real confirmation emails, doctor call‑review + feedback, red‑flag triage, Google/phone auth, hospital connection, 3D landing, full‑site i18n, SOAP‑note pipeline.
 
-| Portal | Number | Signs in as |
-|---|---|---|
-| Patient | `8904030441` | **Ramesh Kumar** — hypertension, BP meds, care plan, appointment |
-| Clinician | `9481479268` | **Dr. Meera Nair** — Cardiology |
-
-Any other number on the patient portal self-provisions a new patient. Doctor numbers
-are rejected on the patient portal and vice-versa.
-
-> **Production:** the real Firebase phone-OTP flow (reCAPTCHA + SMS) still exists in
-> git history and Firebase is already configured — swap the `DEMO_OTP` path in
-> `apps/web/src/components/PhoneLogin.tsx` back to it when you need real auth.
+**Wired, needs an upgrade to go fully live:** inbound PSTN calling works end‑to‑end to the agent; the Twilio→LiveKit SIP bridge needs a **paid Twilio account** (trial blocks external SIP). Email sends to any address once a domain is verified in Resend.
 
 ---
 
-## Enabling live voice
+## 🔐 Security & compliance
 
-1. Create a free project at **[cloud.livekit.io](https://cloud.livekit.io)**.
-2. Put the three values in `services/api/.env` **and** `apps/agent/.env`:
-   `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`.
-3. Put `NEXT_PUBLIC_LIVEKIT_URL` (same wss URL) in `apps/web/.env.local`.
-4. Start the agent: `python agent.py dev` (deploys a worker; pick a region near your
-   users — LiveKit Cloud auto-selects, e.g. India South).
-5. Sign in as the patient → **Call your doctor** → allow the mic → Arya greets you
-   and answers with full context, speech-to-speech.
-
-For real phone calls (PSTN), wire Twilio/Exotel → LiveKit SIP per `infra/telephony.md`.
+- PHI writes flow through the API/Cloud Functions with **central audit logging**.
+- Firestore security rules scope patients to their own data and staff to their org.
+- All secrets are git‑ignored; nothing sensitive is committed.
 
 ---
 
-## Configuration & keys
+<div align="center">
 
-Copy `.env.example` → `services/api/.env` (backend) and fill what you need. The web app
-reads `apps/web/.env.local`; the agent reads `apps/agent/.env`.
+### Arya — because everyone deserves a doctor who speaks their language.
 
-| Key | Used by | Enables |
-|---|---|---|
-| `OPENAI_API_KEY` | api, agent | Real LLM notes + Realtime voice (needs Realtime access) |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | api | Firestore persistence + audit (base64 of the SA JSON) |
-| `NEXT_PUBLIC_FIREBASE_*` | web | Client Firebase (auth, storage) |
-| `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | api, agent | Voice transport + token minting |
-| `NEXT_PUBLIC_LIVEKIT_URL` | web | Browser joins voice rooms |
-| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | api, agent | Session state + <100ms context cache |
-| `RAZORPAY_KEY_ID` / `_SECRET` / `_WEBHOOK_SECRET` | api, functions | Payment links + webhook |
-| `TWILIO_*` / `EXOTEL_*` | api | SMS + inbound/outbound telephony |
+*Made with ❤️ for the OneInbox Hackathon.*
 
-All `.env*` files are git-ignored. **Never commit secrets** — the service-account JSON
-grants full admin access to your Firebase project.
-
----
-
-## Data model
-
-Firestore collections (typed in `packages/shared/src/models.ts`):
-
-```
-organizations/{orgId}
-users/{uid}                 role: doctor|patient|admin|frontdesk, phone, orgId
-patients/{patientId}        demographics, conditions, allergies, meds
-encounters/{encounterId}    transcript[], detectedLanguages[], summary
-  notes/{noteId}            soap{}, icd10[], cpt[], patientSummaryTranslated
-  gaps/{gapId}              field, status, resolvedVia
-prescriptions/{rxId}        drugs[], schedule[], adherenceLog[]
-careplans/{id}              diet, rest, followUp, redFlags
-appointments/{apptId}       scheduledAt, status, reason
-calls/{callId}              direction, triageLevel, latencyMetrics{}
-payments/{paymentId}        provider, amount, status, invoiceUrl
-alerts/{alertId}            severity, kind, encounterRef
-glossary/{term}             translations{lang: string}
-audit/{logId}               actor, action, resource, timestamp
-```
-
-Auth maps a phone number → a `users` record (role + `patientId`). PHI writes go
-through the API/Cloud Functions with central audit logging.
-
----
-
-## How Arya works
-
-**Zero-latency language handling.** Arya never runs a separate language-detection pass
-(that adds 200–400ms). The Realtime session is instructed to mirror the caller's
-language from the audio itself, including mid-sentence code-switching (Hinglish /
-Tanglish). A cheap rolling language tag (`apps/agent/language.py`) is kept only for
-downstream artifacts (notes, SMS), never to gate the voice reply.
-
-**One brain, two surfaces.** `services/api/arya_brain.py` builds the patient's context
-(history, meds, adherence, care plan, appointments) and exposes function-calling tools:
-`get_medication_schedule`, `get_care_instructions`, `get_next_appointment`,
-`get_available_slots`, `book_appointment`, `reschedule_appointment`,
-`log_medication_taken`. The `/arya/chat` endpoint runs this over text today; the voice
-agent runs the same tools over audio.
-
-**Red-flag safety.** Every turn is scanned by a sub-millisecond multilingual classifier
-(`apps/agent/triage.py`). On a red flag (cardiac, stroke, obstetric bleed, self-harm,
-respiratory distress) Arya breaks script, delivers emergency guidance in the patient's
-language, and fires an SMS + push escalation in the same turn.
-
-**Ambient scribing.** During a consult, a LangGraph pipeline turns the transcript into
-a SOAP note with ICD-10/CPT codes and cited differentials, plus a translated patient
-summary. A gap-detection agent surfaces silent "not yet asked" cards to the doctor.
-
----
-
-## Latency engineering
-
-- Native **speech-to-speech** (OpenAI Realtime) — no STT→LLM→TTS chaining.
-- Agent workers deploy near users (LiveKit Cloud picks the region, e.g. India South).
-- Silero VAD is **pre-warmed** per worker; patient context is **prefetched on ring**.
-- System prompt kept < 1500 tokens; long context summarized into a cached block.
-- Per-turn `time_to_first_audio_byte` and `end_of_speech_to_response_start` are
-  instrumented in `apps/agent/agent.py`.
-
----
-
-## Security notes
-
-- Firestore rules (`infra/firestore.rules`) scope patients to their own docs and staff
-  to their org; client PHI writes are denied (writes flow through the Admin SDK).
-- Central audit log for every PHI-touching operation
-  (`services/api/firestore_client.py::audit`).
-- The demo login is **not** production auth — see the note in
-  [Signing in](#signing-in-demo).
-- Field-level encryption via Google Cloud KMS is a documented integration point.
-
----
-
-## Deploy
-
-See `infra/cloudrun.md` (Cloud Run, in-region) and
-`firebase deploy --only functions,firestore:rules`. Dockerfiles for the API and agent
-live in `infra/`.
+</div>
