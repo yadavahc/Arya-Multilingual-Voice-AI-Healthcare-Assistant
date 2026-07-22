@@ -337,10 +337,13 @@ def _resolve_day(text: str) -> str | None:
 
 
 # ── Chat loop ───────────────────────────────────────────────────────────
-def chat(patient_id: str, messages: list[dict], max_tool_rounds: int = 4) -> dict:
+def chat(patient_id: str, messages: list[dict], max_tool_rounds: int = 4,
+         forced_language: str | None = None) -> dict:
     """Run one assistant turn: may call tools, then returns Arya's reply.
 
     messages: prior [{role, content}] turns from the patient/assistant.
+    forced_language: if set (from the website language selector), Arya replies
+    ONLY in this language regardless of the input language.
     Returns {reply, actions:[...], context_used: bool}.
     """
     settings = get_settings()
@@ -353,9 +356,9 @@ def chat(patient_id: str, messages: list[dict], max_tool_rounds: int = 4) -> dic
     from openai import OpenAI
 
     client = OpenAI(api_key=settings.openai_api_key)
-    # Force the reply language to match the patient's latest message.
+    # Reply language: the user's chosen website language wins; else detect it.
     last_user = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
-    reply_lang = detect_message_language(last_user)
+    reply_lang = forced_language if forced_language in _LANG_NAMES else detect_message_language(last_user)
     lang_directive = {
         "role": "system",
         "content": f"The patient's latest message is in {_LANG_NAMES[reply_lang]}. "
