@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RequireRole } from '@/components/RequireRole';
 import { BookingCalendar } from '@/components/BookingCalendar';
 import { CallArya } from '@/components/CallArya';
+import { HealthFeatures } from '@/components/HealthFeatures';
 import { useAuth } from '@/lib/auth';
 import { useLang, useT } from '@/lib/i18n';
 import { api, type ChatMessage } from '@/lib/api';
@@ -46,6 +47,8 @@ function PatientCare() {
       </div>
 
       <AryaChat patientId={patientId} />
+
+      <HealthFeatures patientId={patientId} />
 
       <BookingCalendar patientId={patientId} doctorId={doctorId} />
 

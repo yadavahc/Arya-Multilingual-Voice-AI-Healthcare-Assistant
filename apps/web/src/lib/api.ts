@@ -122,6 +122,28 @@ export const api = {
   listDocuments: (patientId: string) =>
     j<{ documents: any[] }>(`/patients/${patientId}/documents`),
 
+  // AI health features
+  verifyMedicine: async (patientId: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${BASE}/patients/${patientId}/verify-medicine`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error(`verify → ${res.status}`);
+    return res.json() as Promise<any>;
+  },
+  detectCondition: async (patientId: string, file: File, note = '') => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${BASE}/patients/${patientId}/detect-condition?note=${encodeURIComponent(note)}`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error(`detect → ${res.status}`);
+    return res.json() as Promise<any>;
+  },
+  dietPlan: (patientId: string) =>
+    j<{ plan: any }>(`/patients/${patientId}/diet-plan`, { method: 'POST' }),
+  wearables: (patientId: string) =>
+    j<{ metrics: any; analysis: any }>(`/wearables/${patientId}`),
+  syncWearables: (patientId: string, metrics: any) =>
+    j<{ metrics: any; analysis: any }>(`/wearables/${patientId}/sync`, { method: 'POST', body: JSON.stringify(metrics) }),
+
   // Call review + feedback
   doctorCalls: (doctorId: string) => j<{ calls: any[] }>(`/doctors/${doctorId}/calls`),
   getConversation: (convId: string) => j<any>(`/conversations/${convId}`),
