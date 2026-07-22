@@ -86,7 +86,14 @@ function PatientCare() {
           viewport={{ once: true }}
           className="mt-8 rounded-2xl bg-teal-50 p-5 shadow-card"
         >
-          <h2 className="text-lg font-semibold text-teal-900">{t('patient.nextAppt')}</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-teal-900">{t('patient.nextAppt')}</h2>
+            <span className={`rounded-full px-3 py-1 text-xs font-medium ${
+              nextAppt.status === 'confirmed' ? 'bg-signal-green/15 text-green-700' : 'bg-amber-100 text-amber-700'
+            }`}>
+              {nextAppt.status === 'confirmed' ? '✓ Confirmed' : '⏳ Pending confirmation'}
+            </span>
+          </div>
           <p className="mt-1 text-2xl font-semibold text-teal-800">{nextAppt.date} · {nextAppt.time}</p>
           <p className="text-teal-600">{nextAppt.reason}</p>
         </motion.section>
