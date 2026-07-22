@@ -188,6 +188,23 @@ async def entrypoint(ctx: JobContext) -> None:
             role = str(pmeta["role"]).lower()
         if pmeta.get("language"):
             fixed_language = str(pmeta["language"]).lower()
+
+        # Inbound PHONE call: identify the patient by caller ID (their number),
+        # then load their history + uploaded documents before greeting.
+        if not meta_patient_id:
+            attrs = getattr(participant, "attributes", {}) or {}
+            caller = attrs.get("sip.phoneNumber") or attrs.get("sip.from")
+            if caller:
+                import httpx
+
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    r = await client.get(f"{API_BASE_URL.rstrip('/')}/patients/by-phone",
+                                         params={"phone": caller})
+                    if r.status_code == 200 and r.json().get("found"):
+                        data = r.json()
+                        meta_patient_id = data["patientId"]
+                        fixed_language = (data.get("preferredLanguage") or fixed_language).lower()
+                        logger.info("caller %s → patient %s", caller, meta_patient_id)
     except Exception:
         pass
 

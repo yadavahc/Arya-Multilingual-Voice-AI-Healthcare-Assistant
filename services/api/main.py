@@ -501,6 +501,22 @@ def doctor_calls(doctor_id: str) -> dict:
     return {"calls": convs}
 
 
+# ── Caller-ID lookup: phone → patient (for inbound phone calls) ─────────
+@app.get("/patients/by-phone")
+def patient_by_phone(phone: str) -> dict:
+    target = _e164(phone)
+    match = next(
+        (s.to_dict() for s in db().collection("patients").stream()
+         if _e164((s.to_dict() or {}).get("phone", "")) == target),
+        None,
+    )
+    if not match:
+        return {"found": False}
+    return {"found": True, "patientId": match.get("id"), "name": match.get("name"),
+            "preferredLanguage": match.get("preferredLanguage", "en"),
+            "orgId": match.get("orgId"), "hospitalId": match.get("hospitalId")}
+
+
 # ── Patient context (Arya's knowledge for a call) ───────────────────────
 @app.get("/patients/{patient_id}/context")
 def patient_context(patient_id: str) -> dict:
