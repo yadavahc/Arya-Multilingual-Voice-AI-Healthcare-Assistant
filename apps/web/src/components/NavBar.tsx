@@ -2,21 +2,22 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-
-const staffLinks = [
-  { href: '/doctor', label: 'My Patients' },
-  { href: '/doctor/calls', label: 'Call Reviews' },
-  { href: '/consult', label: 'Live Consult' },
-  { href: '/admin', label: 'Analytics' },
-];
-const patientLinks = [{ href: '/patient', label: 'My Care' }];
+import { useT } from '@/lib/i18n';
+import { LanguageSelector } from '@/components/LanguageSelector';
 
 export function NavBar() {
   const path = usePathname();
   const router = useRouter();
   const user = useAuth((s) => s.user);
   const logout = useAuth((s) => s.logout);
+  const t = useT();
 
+  const staffLinks = [
+    { href: '/doctor', label: t('nav.myPatients') },
+    { href: '/doctor/calls', label: t('nav.callReviews') },
+    { href: '/admin', label: t('nav.analytics') },
+  ];
+  const patientLinks = [{ href: '/patient', label: t('nav.myCare') }];
   const links = user?.role === 'patient' ? patientLinks : user ? staffLinks : [];
 
   return (
@@ -43,27 +44,23 @@ export function NavBar() {
             );
           })}
 
+          <div className="ml-2"><LanguageSelector /></div>
+
           {user ? (
-            <div className="ml-3 flex items-center gap-3">
+            <div className="ml-2 flex items-center gap-3">
               <span className="hidden text-sm text-teal-600 sm:inline">
                 {user.displayName} · <span className="capitalize">{user.role}</span>
               </span>
               <button
-                onClick={() => {
-                  logout();
-                  router.push('/');
-                }}
+                onClick={() => { logout(); router.push('/'); }}
                 className="rounded-lg bg-white px-3 py-1.5 text-sm text-teal-800 shadow-card"
               >
-                Sign out
+                {t('nav.signOut')}
               </button>
             </div>
           ) : (
-            <Link
-              href="/login"
-              className="ml-2 rounded-lg bg-teal-600 px-3 py-1.5 text-sm text-cream-50"
-            >
-              Sign in
+            <Link href="/login" className="ml-2 rounded-lg bg-teal-600 px-3 py-1.5 text-sm text-cream-50">
+              {t('nav.signIn')}
             </Link>
           )}
         </div>
