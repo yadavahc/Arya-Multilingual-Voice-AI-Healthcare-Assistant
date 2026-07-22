@@ -333,9 +333,29 @@ class SaveConvReq(BaseModel):
     id: Optional[str] = None
 
 
+def _dedup_turns(turns: list[dict]) -> list[dict]:
+    """Collapse interim STT duplicates: consecutive same-role turns where each
+    is a growing prefix of the next keep only the final (longest) version."""
+    out: list[dict] = []
+    for t in turns:
+        text = (t.get("text") or "").strip()
+        if not text:
+            continue
+        if out and out[-1].get("role") == t.get("role"):
+            prev = (out[-1].get("text") or "").strip()
+            if text.startswith(prev) or prev.startswith(text):
+                # same utterance growing — keep the longer one
+                if len(text) >= len(prev):
+                    out[-1] = t
+                continue
+        out.append(t)
+    return out
+
+
 @app.post("/conversations")
 def save_conversation(req: SaveConvReq) -> dict:
     conv_id = req.id or f"conv-{int(time.time()*1000)}"
+    req.turns = _dedup_turns(req.turns)
     # Resolve the patient's primary doctor if not supplied.
     doctor_id = req.doctorId
     if not doctor_id:
@@ -368,7 +388,9 @@ def get_conversation(conv_id: str) -> dict:
     snap = db().collection("conversations").document(conv_id).get()
     if not snap.exists:
         raise HTTPException(404, "conversation not found")
-    return snap.to_dict() or {}
+    conv = snap.to_dict() or {}
+    conv["turns"] = _dedup_turns(conv.get("turns", []))
+    return conv
 
 
 @app.post("/conversations/{conv_id}/finalize")
@@ -431,6 +453,8 @@ def doctor_calls(doctor_id: str) -> dict:
     convs = [s.to_dict() for s in db().collection("conversations").stream()
              if (s.to_dict() or {}).get("doctorId") == doctor_id]
     convs.sort(key=lambda c: c.get("startedAt", ""), reverse=True)
+    for c in convs:
+        c["turns"] = _dedup_turns(c.get("turns", []))
     return {"calls": convs}
 
 
