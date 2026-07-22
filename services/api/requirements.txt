@@ -3,6 +3,7 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 pydantic-settings>=2.3
 python-dotenv>=1.0
+python-multipart>=0.0.9          # required for file uploads (medicine/photo/docs)
 
 # LLM + orchestration
 openai>=1.40
@@ -13,13 +14,15 @@ langchain-openai>=0.2
 # Firebase Admin (Firestore, Storage, FCM)
 firebase-admin>=6.5
 
-# Payments / telephony / messaging
-razorpay>=1.4
+# Voice tokens + telephony
+livekit-api>=0.7                 # LiveKit access tokens + SIP
 twilio>=9.0
+razorpay>=1.4
 
-# RAG (optional)
-pinecone-client>=5.0
+# Documents (RAG) + PDFs
+pypdf>=4.2
+python-docx>=1.1
+reportlab>=4.2
 
 httpx>=0.27
 sentry-sdk[fastapi]>=2.0
-reportlab>=4.2
