@@ -1,15 +1,14 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useVoiceRoom } from '@/lib/useVoiceRoom';
 import { useLang, useT } from '@/lib/i18n';
-import { api } from '@/lib/api';
 
 /**
  * Beautiful, modern voice-call UI for talking to Arya. A big call button that
  * expands into a full-screen call surface with an animated orb + waveform,
- * live timer, mute, end-call, and in-call document upload — all in the teal
- * theme, in the user's chosen language.
+ * live timer, mute, and end-call — all in the teal theme, in the user's chosen
+ * language. (Document upload lives in the chat interface, not here.)
  */
 export function CallArya({ patientId, patientName }: { patientId: string; patientName: string }) {
   const lang = useLang((s) => s.lang);
@@ -20,18 +19,6 @@ export function CallArya({ patientId, patientName }: { patientId: string; patien
   const [open, setOpen] = useState(false);
   const [muted, setMuted] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [docNote, setDocNote] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  async function uploadInCall(file: File) {
-    setDocNote('Reading…');
-    try {
-      const r = await api.uploadDocument(patientId, file);
-      setDocNote(`📄 ${r.filename} — ask Arya about it`);
-    } catch {
-      setDocNote('Could not read that file');
-    }
-  }
 
   const live = status === 'live';
   const connecting = status === 'connecting';
@@ -126,10 +113,8 @@ export function CallArya({ patientId, patientName }: { patientId: string; patien
                 </p>
               )}
 
-              {docNote && <p className="mb-3 text-sm text-teal-200">{docNote}</p>}
-
               {/* Controls */}
-              <div className="flex items-center gap-5">
+              <div className="flex items-center gap-6">
                 <ControlButton
                   label={muted ? t('call.unmute') : t('call.mute')}
                   active={muted}
@@ -137,7 +122,6 @@ export function CallArya({ patientId, patientName }: { patientId: string; patien
                   icon={muted ? '🔇' : '🎙️'}
                   disabled={!live}
                 />
-                <ControlButton label={t('patient.upload')} icon="📎" onClick={() => fileRef.current?.click()} />
                 <button
                   onClick={end}
                   className="grid h-16 w-16 place-items-center rounded-full bg-signal-red text-2xl shadow-lift transition-transform hover:scale-105"
@@ -147,13 +131,6 @@ export function CallArya({ patientId, patientName }: { patientId: string; patien
                 </button>
                 <ControlButton label={t('call.speaker')} active icon="🔊" onClick={() => {}} disabled={!live} />
               </div>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".pdf,.docx,.txt,.jpg,.png"
-                className="hidden"
-                onChange={(e) => e.target.files?.[0] && uploadInCall(e.target.files[0])}
-              />
             </motion.div>
           </motion.div>
         )}
