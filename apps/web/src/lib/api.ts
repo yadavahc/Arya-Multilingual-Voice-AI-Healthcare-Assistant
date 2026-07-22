@@ -94,6 +94,10 @@ export const api = {
     const q = new URLSearchParams(params as any).toString();
     return j<{ appointments: any[] }>(`/appointments?${q}`);
   },
+  confirmAppointment: (id: string) =>
+    j<{ confirmed: boolean; emailed: boolean }>(`/appointments/${id}/confirm`, { method: 'POST' }),
+  rejectAppointment: (id: string) =>
+    j<{ rejected: boolean }>(`/appointments/${id}/reject`, { method: 'POST' }),
 
   // Doctor views
   doctorPatients: (doctorId: string) =>
