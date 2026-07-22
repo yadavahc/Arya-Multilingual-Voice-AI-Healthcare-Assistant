@@ -47,9 +47,8 @@ def seed() -> dict:
         {"uid": "doc-1", "role": "doctor", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID,
          "displayName": "Dr. Aisha Rao", "email": DOCTOR_EMAIL, "phone": DOCTOR_PHONE,
          "specialty": "Cardiology", "preferredLanguage": "en",
-         # Calendar/availability: working days/hours + slot length drive open slots.
-         "availability": {"days": [0, 1, 2, 3, 4, 5], "start": "09:00", "end": "17:00", "slotMinutes": 30,
-                          "lunch": {"start": "13:00", "end": "14:00"}},
+         # Doctor defines exactly THREE bookable slots per working day.
+         "availability": {"days": [0, 1, 2, 3, 4, 5], "slots": ["10:00", "12:30", "16:00"]},
          "createdAt": _now_iso(-9000)}
     )
 
@@ -121,19 +120,12 @@ def seed() -> dict:
          ]}
     )
 
-    # ── Doctor's calendar: existing booked appointments ─────────────────
+    # ── Doctor's calendar: one confirmed appointment (14 days out) ──────
     d.collection("appointments").document("appt-1").set(
         {"id": "appt-1", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID, "patientId": "pat-1",
-         "patientName": "Ramesh Kumar", "doctorId": "doc-1", "date": _date(13), "time": "10:30",
-         "status": "booked", "reason": "BP & sugar re-check", "createdAt": _now_iso(-1440)}
+         "patientName": "Ramesh Kumar", "doctorId": "doc-1", "date": _date(13), "time": "10:00",
+         "status": "confirmed", "reason": "BP & sugar re-check", "createdAt": _now_iso(-1440)}
     )
-    # A couple of already-taken slots so "available slots" looks real.
-    for i, (dt, tm) in enumerate([(_date(1), "10:00"), (_date(1), "11:30"), (_date(2), "09:30")]):
-        d.collection("appointments").document(f"appt-x{i}").set(
-            {"id": f"appt-x{i}", "orgId": DEMO_ORG, "hospitalId": HOSPITAL_ID, "patientId": "pat-2",
-             "patientName": "Other Patient", "doctorId": "doc-1", "date": dt, "time": tm,
-             "status": "booked", "reason": "Consultation", "createdAt": _now_iso(-200)}
-        )
 
     # ── Conversations (chat/voice, saved for the doctor to review) ──────
     d.collection("conversations").document("conv-seed").set(
