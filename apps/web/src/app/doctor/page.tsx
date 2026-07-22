@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RequireRole } from '@/components/RequireRole';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
@@ -18,6 +18,7 @@ export default function DoctorHome() {
 function DoctorInner() {
   const user = useAuth((s) => s.user)!;
   const t = useT();
+  const qc = useQueryClient();
   const { data: patientsData } = useQuery({
     queryKey: ['doctor-patients', user.uid],
     queryFn: () => api.doctorPatients(user.uid),
@@ -29,7 +30,17 @@ function DoctorInner() {
   const patients = patientsData?.patients ?? [];
   const appts = apptData?.appointments ?? [];
   const today = new Date().toISOString().slice(0, 10);
-  const upcoming = appts.filter((a) => a.date >= today);
+  const pending = appts.filter((a) => a.status === 'pending');
+  const upcoming = appts.filter((a) => a.status === 'confirmed' && a.date >= today);
+
+  async function confirm(id: string) {
+    await api.confirmAppointment(id);
+    qc.invalidateQueries({ queryKey: ['doctor-appts', user.uid] });
+  }
+  async function reject(id: string) {
+    await api.rejectAppointment(id);
+    qc.invalidateQueries({ queryKey: ['doctor-appts', user.uid] });
+  }
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
@@ -77,6 +88,36 @@ function DoctorInner() {
 
         {/* Schedule */}
         <div>
+          {/* Pending approvals */}
+          {pending.length > 0 && (
+            <div className="mb-6">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-signal-amber">
+                Pending confirmation ({pending.length})
+              </h2>
+              <div className="space-y-2">
+                {pending.map((a) => (
+                  <motion.div
+                    key={a.id}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="rounded-xl border-l-4 border-signal-amber bg-white p-3 shadow-card"
+                  >
+                    <p className="font-medium text-teal-900">{a.patientName}</p>
+                    <p className="text-xs text-teal-500">{a.date} · {a.time} · {a.reason}</p>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => confirm(a.id)} className="rounded-lg bg-signal-green px-3 py-1.5 text-xs font-medium text-white">
+                        ✓ Confirm
+                      </button>
+                      <button onClick={() => reject(a.id)} className="rounded-lg bg-cream-100 px-3 py-1.5 text-xs font-medium text-teal-700">
+                        Decline
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-teal-500">
             {t('doctor.schedule')}
           </h2>
