@@ -1,0 +1,50 @@
+# Render Blueprint — deploys the Arya FastAPI backend to a public HTTPS URL.
+# Fixes "Failed to fetch" on phones (localhost only works on the API host machine).
+#
+# Steps:
+#   1. Push this file (done).
+#   2. render.com → New → Blueprint → connect this GitHub repo → Apply.
+#   3. Add the environment variables below (copy values from services/api/.env).
+#   4. Copy the deployed URL (https://arya-api-xxxx.onrender.com).
+#   5. In Vercel → Settings → Environment Variables, set
+#        NEXT_PUBLIC_API_BASE_URL = https://arya-api-xxxx.onrender.com
+#      then redeploy the web app. Mobile will now work.
+services:
+  - type: web
+    name: arya-api
+    runtime: python
+    rootDir: services/api
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      # Set these in the Render dashboard (values from services/api/.env):
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_NOTES_MODEL
+        value: gpt-4.1-mini
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: LIVEKIT_SIP_HOST
+        value: arya-62mcncn2.sip.livekit.cloud
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        value: "+19207686876"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: Arya <onboarding@resend.dev>
