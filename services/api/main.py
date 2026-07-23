@@ -8,53 +8,107 @@ are supplied.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
-from typing import Optional
+from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-from arya_brain import build_patient_context, chat as arya_chat, context_summary
+from arya_brain import build_patient_context, context_summary
+from arya_brain import chat as arya_chat
 from calendar_slots import available_slots, next_available
 from config import get_settings
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from firestore_client import audit, db, mode
 from graphs.gap_graph import detect_gaps
 from graphs.soap_graph import run_soap_pipeline
 from integrations import create_payment_link, send_push, send_sms
 from livekit_tokens import create_token
-from pdf_gen import claim_bundle_pdf, medication_pictogram_pdf
+from pdf_gen import medication_pictogram_pdf
+from pydantic import BaseModel
 from seed import seed as seed_demo
 
-app = FastAPI(title="Arya API", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
+logger = logging.getLogger("arya.api")
 
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    # Seed demo data if the org doesn't exist yet. Never crash startup if the
-    # datastore isn't reachable yet (e.g. Firestore API not enabled) — the app
-    # still serves, and endpoints surface the error per-request.
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Log which integrations are configured (never the values themselves).
+    s = get_settings()
+    logger.info(
+        "starting Arya API | store=%s llm=%s livekit=%s sarvam=%s twilio=%s email=%s",
+        mode(), bool(s.openai_api_key), bool(s.livekit_api_key),
+        bool(os.getenv("SARVAM_API_KEY")), bool(s.twilio_account_sid),
+        bool(os.getenv("RESEND_API_KEY") or os.getenv("SMTP_HOST")),
+    )
+    # Seed demo data if absent. Never crash startup if the datastore isn't
+    # reachable — the app still serves and surfaces errors per-request.
     try:
         snap = db().collection("organizations").document("demo-org").get()
         if not snap.exists:
             seed_demo()
     except Exception as exc:  # pragma: no cover
-        import logging
+        logger.warning("startup seed skipped (datastore not ready): %s", str(exc)[:200])
+    yield
 
-        logging.getLogger("arya.api").warning(
-            "startup seed skipped (datastore not ready): %s", str(exc)[:200]
+
+app = FastAPI(title="Arya API", version="1.0.0", lifespan=lifespan)
+
+# CORS: local dev + any Vercel deployment of the app (override with env).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=os.getenv("ALLOWED_ORIGIN_REGEX", r"https://.*\.vercel\.app"),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Request logging + security headers + simple per-IP rate limit ───────
+_RATE_BUCKETS: dict[str, deque] = defaultdict(deque)
+_RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_MINUTE", "300"))
+
+
+@app.middleware("http")
+async def _observability(request: Request, call_next):
+    # Rate limit (per client IP, sliding 60s window). Generous default so the
+    # demo is never throttled; tune via RATE_LIMIT_PER_MINUTE.
+    ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    bucket = _RATE_BUCKETS[ip]
+    while bucket and now - bucket[0] > 60:
+        bucket.popleft()
+    if len(bucket) >= _RATE_LIMIT:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse({"error": "rate_limited", "detail": "Too many requests"}, status_code=429)
+    bucket.append(now)
+
+    start = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("unhandled error on %s %s", request.method, request.url.path)
+        from fastapi.responses import JSONResponse
+
+        response = JSONResponse(
+            {"error": "internal_error", "detail": "Something went wrong. The team has been notified."},
+            status_code=500,
         )
+    dur_ms = (time.monotonic() - start) * 1000
+    logger.info("%s %s -> %s (%.0fms)", request.method, request.url.path, response.status_code, dur_ms)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 # ── Health / meta ───────────────────────────────────────────────────────
@@ -74,7 +128,7 @@ class TokenReq(BaseModel):
     identity: str
     name: str = ""
     role: str = "companion"  # companion | triage | scribe | adherence
-    patientId: Optional[str] = None
+    patientId: str | None = None
     language: str = "en"
 
 
@@ -352,7 +406,7 @@ def reject_appointment(appt_id: str) -> dict:
 
 
 @app.get("/appointments")
-def appointments_list(doctorId: Optional[str] = None, patientId: Optional[str] = None) -> dict:
+def appointments_list(doctorId: str | None = None, patientId: str | None = None) -> dict:
     out = []
     for s in db().collection("appointments").stream():
         a = s.to_dict() or {}
@@ -368,12 +422,12 @@ def appointments_list(doctorId: Optional[str] = None, patientId: Optional[str] =
 # ── Conversations (doctor tracks what Arya discussed) ───────────────────
 class SaveConvReq(BaseModel):
     patientId: str
-    doctorId: Optional[str] = None
+    doctorId: str | None = None
     channel: str = "chat"  # chat | voice
     language: str = "en"
     turns: list[dict]
     summary: str = ""
-    id: Optional[str] = None
+    id: str | None = None
 
 
 def _dedup_turns(turns: list[dict]) -> list[dict]:
@@ -413,7 +467,7 @@ def save_conversation(req: SaveConvReq) -> dict:
 
 
 @app.get("/conversations")
-def list_conversations(patientId: Optional[str] = None, doctorId: Optional[str] = None) -> dict:
+def list_conversations(patientId: str | None = None, doctorId: str | None = None) -> dict:
     convs = []
     for s in db().collection("conversations").stream():
         c = s.to_dict() or {}
@@ -473,7 +527,7 @@ class FeedbackReq(BaseModel):
     handledCorrectly: bool
     rating: int = 0  # 1-5
     notes: str = ""
-    reviewedBy: Optional[str] = None
+    reviewedBy: str | None = None
 
 
 @app.post("/conversations/{conv_id}/feedback")
@@ -641,10 +695,10 @@ def diet_plan_endpoint(patient_id: str) -> dict:
 
 
 class WearableSync(BaseModel):
-    steps: Optional[float] = None
-    restingHeartRate: Optional[float] = None
-    spo2: Optional[float] = None
-    sleepHours: Optional[float] = None
+    steps: float | None = None
+    restingHeartRate: float | None = None
+    spo2: float | None = None
+    sleepHours: float | None = None
     source: str = "google_fit"
 
 
@@ -679,7 +733,7 @@ def wearables_get(patient_id: str) -> dict:
 class ChatReq(BaseModel):
     patientId: str
     messages: list[dict]  # [{role: "user"|"assistant", content: str}]
-    sessionId: Optional[str] = None
+    sessionId: str | None = None
     channel: str = "chat"
     language: str = "en"
 
@@ -731,7 +785,7 @@ def appointments_reschedule(req: RescheduleReq) -> dict:
 
 # ── Glossary ────────────────────────────────────────────────────────────
 @app.get("/glossary")
-def glossary(terms: Optional[str] = None) -> dict:
+def glossary(terms: str | None = None) -> dict:
     wanted = set(t.strip() for t in terms.split(",")) if terms else None
     out: dict[str, dict] = {}
     for snap in db().collection("glossary").stream():
@@ -810,7 +864,7 @@ async def encounter_gaps(encounter_id: str, progress: float = 1.0) -> dict:
 class EscalateReq(BaseModel):
     orgId: str
     callId: str
-    patientId: Optional[str] = None
+    patientId: str | None = None
     flag: str
     excerpt: str
 
@@ -836,7 +890,7 @@ def escalate(req: EscalateReq) -> dict:
 # ── Appointments (voice tool) ───────────────────────────────────────────
 class ApptReq(BaseModel):
     orgId: str
-    patientId: Optional[str] = None
+    patientId: str | None = None
     preferredDay: str
     preferredTime: str
     reason: str
@@ -855,7 +909,7 @@ def appointments(req: ApptReq) -> dict:
 # ── Payments (voice tool + webhook) ─────────────────────────────────────
 class PayLinkReq(BaseModel):
     orgId: str
-    patientId: Optional[str] = None
+    patientId: str | None = None
     amount: int  # paise
     currency: str = "INR"
     note: str = "Consultation fee"
@@ -895,7 +949,7 @@ async def payments_webhook(request: Request) -> dict:
 # ── Twilio inbound voice → LiveKit SIP → Arya answers ───────────────────
 @app.post("/twilio/voice")
 @app.get("/twilio/voice")
-def twilio_voice() -> "Response":
+def twilio_voice():
     """TwiML that bridges an inbound PSTN call to Arya on LiveKit SIP.
     Point your Twilio number's Voice webhook at this URL (needs a public API)."""
     from fastapi.responses import Response
@@ -921,7 +975,7 @@ def availability(orgId: str, resource: str) -> dict:
 
 # ── Adherence ───────────────────────────────────────────────────────────
 class AdherenceReq(BaseModel):
-    patientId: Optional[str] = None
+    patientId: str | None = None
     callId: str
     taken: bool
 
