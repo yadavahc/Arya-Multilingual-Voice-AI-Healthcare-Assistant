@@ -5,7 +5,6 @@ the demo flow runs offline while remaining real when configured.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from config import get_settings
 
@@ -92,7 +91,7 @@ def send_email(to: str, subject: str, body: str) -> bool:
     return True
 
 
-def send_push(token: Optional[str], title: str, body: str, data: Optional[dict] = None) -> bool:
+def send_push(token: str | None, title: str, body: str, data: dict | None = None) -> bool:
     if not token:
         logger.info("[dev] push (no token): %s — %s", title, body)
         return True

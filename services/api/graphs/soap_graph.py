@@ -97,8 +97,8 @@ async def translate_summary(state: SoapState) -> SoapState:
 
 # ── Heuristic stubs (offline mode) ──────────────────────────────────────
 def _stub_soap(transcript: str) -> dict:
-    lines = [l for l in transcript.splitlines() if l.strip()]
-    patient_lines = " ".join(l.split(":", 1)[-1].strip() for l in lines if l.lower().startswith("patient"))
+    lines = [line for line in transcript.splitlines() if line.strip()]
+    patient_lines = " ".join(line.split(":", 1)[-1].strip() for line in lines if line.lower().startswith("patient"))
     return {
         "subjective": patient_lines[:600] or "Patient-reported symptoms (see transcript).",
         "objective": "Vitals and exam findings to be completed by clinician.",

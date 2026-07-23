@@ -1,0 +1,14 @@
+line-length = 110
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+  "E501",   # long lines (prompts/strings)
+  "B008",   # FastAPI Depends/File defaults in signatures
+  "UP007",  # keep Optional[] style used across the codebase
+  "UP042",  # str+Enum is intentional (json serialization)
+]
+
+[lint.per-file-ignores]
+"services/api/tests/*" = ["E402"]  # conftest sets env before imports by design

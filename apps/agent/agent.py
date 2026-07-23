@@ -13,10 +13,8 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Optional
 
 from dotenv import load_dotenv
-from livekit import agents, rtc
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -40,7 +38,7 @@ from language import Glossary, detect_language_from_text
 from prompts import build_instructions
 from session_state import LatencySample, SessionState, SessionStore
 from tools import build_tools
-from triage import classify, escalate, RedFlag
+from triage import classify, escalate
 
 load_dotenv()
 logger = logging.getLogger("arya.agent")
@@ -114,7 +112,7 @@ def _build_session(ctx: JobContext, detected_language: str) -> AgentSession:
     return AgentSession(**kwargs)
 
 
-def _parse_metadata(ctx: JobContext) -> tuple[str, Optional[str], str]:
+def _parse_metadata(ctx: JobContext) -> tuple[str, str | None, str]:
     """Return (role, patient_id, language) from job metadata.
 
     Metadata may be JSON ({"role","patientId","language"}) from the token/

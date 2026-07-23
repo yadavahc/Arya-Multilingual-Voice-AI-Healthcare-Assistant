@@ -7,10 +7,9 @@ model can call them natively during a turn.
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import httpx
-from livekit.agents import function_tool, RunContext
+from livekit.agents import RunContext, function_tool
 
 API = os.getenv("API_BASE_URL", "http://localhost:8080").rstrip("/")
 
@@ -29,7 +28,7 @@ async def _get(path: str, params: dict) -> dict:
         return resp.json()
 
 
-def build_tools(*, org_id: str, patient_id: Optional[str], call_id: str) -> list:
+def build_tools(*, org_id: str, patient_id: str | None, call_id: str) -> list:
     """Return the tool list, closed over the current session's identifiers."""
 
     @function_tool
@@ -113,7 +112,7 @@ def build_tools(*, org_id: str, patient_id: Optional[str], call_id: str) -> list
             return "I don't have your records handy right now."
         data = await _get(f"/patients/{patient_id}/context", {})
         summary = data.get("summary", "")
-        meds = [l for l in summary.splitlines() if l.startswith("Medication:")]
+        meds = [line for line in summary.splitlines() if line.startswith("Medication:")]
         return " ".join(meds) or "I don't see any active medications on file."
 
     @function_tool

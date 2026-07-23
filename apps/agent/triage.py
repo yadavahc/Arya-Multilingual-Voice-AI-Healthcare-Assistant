@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 import httpx
 
@@ -29,9 +28,9 @@ class RedFlag(str, Enum):
 @dataclass
 class TriageResult:
     is_red_flag: bool
-    flag: Optional[RedFlag] = None
-    matched: Optional[str] = None
-    emergency_instruction_key: Optional[str] = None
+    flag: RedFlag | None = None
+    matched: str | None = None
+    emergency_instruction_key: str | None = None
 
 
 # High-recall multilingual lexicon. Keys are lowercased substrings we scan for.
@@ -89,7 +88,7 @@ async def escalate(
     *,
     org_id: str,
     call_id: str,
-    patient_id: Optional[str],
+    patient_id: str | None,
     flag: RedFlag,
     transcript_excerpt: str,
 ) -> None:

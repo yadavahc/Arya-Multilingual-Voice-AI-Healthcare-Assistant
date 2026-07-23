@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Optional
+from typing import Any
 
 from config import get_settings
 from firestore_client import audit, db
+
 
 # ── Context assembly ────────────────────────────────────────────────────
 def build_patient_context(patient_id: str) -> dict[str, Any]:

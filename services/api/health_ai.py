@@ -9,6 +9,7 @@ from typing import Any
 
 from config import get_settings
 
+
 # gpt-4.1-mini is multimodal (supports images). Override via OPENAI_VISION_MODEL.
 def _vision_model() -> str:
     import os
@@ -89,7 +90,9 @@ def _is_expired(expiry_text: str) -> Any:
     m = re.search(r"(0?[1-9]|1[0-2])[/\-\s]?(\d{2,4})", expiry_text)
     if not m:
         return None
-    month = int(m.group(1)); year = int(m.group(2)); year += 2000 if year < 100 else 0
+    month = int(m.group(1))
+    year = int(m.group(2))
+    year += 2000 if year < 100 else 0
     try:
         return datetime(year, month, 1) < datetime.now().replace(day=1)
     except Exception:

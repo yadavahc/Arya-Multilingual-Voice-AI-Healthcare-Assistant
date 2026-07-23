@@ -5,7 +5,6 @@ uploads to Cloud Storage.
 from __future__ import annotations
 
 import io
-from typing import Any
 
 
 def _pictogram_for_slot(slot: str) -> str:

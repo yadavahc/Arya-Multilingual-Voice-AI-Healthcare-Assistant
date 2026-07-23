@@ -10,7 +10,7 @@ import base64
 import json
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from config import get_settings
 
@@ -49,7 +49,7 @@ class _MemoryCollection:
     def __init__(self, store: dict) -> None:
         self._store = store
 
-    def document(self, doc_id: Optional[str] = None):
+    def document(self, doc_id: str | None = None):
         doc_id = doc_id or f"auto-{int(time.time()*1000)}-{len(self._store)}"
         return _MemoryDoc(self._store, doc_id)
 
@@ -77,7 +77,7 @@ class _MemoryDoc:
 
 
 class _MemorySnap:
-    def __init__(self, doc_id: str, data: Optional[dict]) -> None:
+    def __init__(self, doc_id: str, data: dict | None) -> None:
         self.id = doc_id
         self._data = data
 
@@ -85,7 +85,7 @@ class _MemorySnap:
     def exists(self) -> bool:
         return self._data is not None
 
-    def to_dict(self) -> Optional[dict]:
+    def to_dict(self) -> dict | None:
         return self._data
 
 
@@ -107,7 +107,7 @@ def mode() -> str:
     return _mode
 
 
-def audit(actor: str, action: str, resource: str, ip: Optional[str] = None) -> None:
+def audit(actor: str, action: str, resource: str, ip: str | None = None) -> None:
     """Central audit log for every PHI-touching operation."""
     entry = {
         "actor": actor,

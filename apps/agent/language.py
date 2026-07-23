@@ -11,9 +11,6 @@ The voice response is NEVER gated on language detection (that would add
 """
 from __future__ import annotations
 
-import re
-from typing import Optional
-
 import httpx
 
 # Script (Unicode block) → language heuristic. Cheap, synchronous, no model call.
@@ -68,7 +65,7 @@ class Glossary:
         self._api = api_base_url.rstrip("/")
         self._cache: dict[str, dict[str, str]] = {}
 
-    async def load(self, terms: Optional[list[str]] = None) -> dict[str, dict[str, str]]:
+    async def load(self, terms: list[str] | None = None) -> dict[str, dict[str, str]]:
         params = {"terms": ",".join(terms)} if terms else {}
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
@@ -91,5 +88,5 @@ class Glossary:
             return ""
         return (
             "Locked medical glossary — always use these exact translations for "
-            f"clinical terms in the patient's language:\n" + "\n".join(lines)
+            "clinical terms in the patient's language:\n" + "\n".join(lines)
         )

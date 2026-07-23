@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Any, Optional
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 try:  # Upstash REST client — serverless-friendly
     from upstash_redis import Redis as UpstashRedis
@@ -30,8 +30,8 @@ class SessionState:
     session_id: str
     role: str = "triage"
     detected_language: str = "en"
-    patient_id: Optional[str] = None
-    org_id: Optional[str] = None
+    patient_id: str | None = None
+    org_id: str | None = None
     latency: list[LatencySample] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -39,7 +39,7 @@ class SessionState:
         return json.dumps(d)
 
     @classmethod
-    def from_json(cls, raw: str) -> "SessionState":
+    def from_json(cls, raw: str) -> SessionState:
         d = json.loads(raw)
         samples = [LatencySample(**s) for s in d.pop("latency", [])]
         return cls(latency=samples, **d)
@@ -51,7 +51,7 @@ class _MemoryStore:
     def __init__(self) -> None:
         self._d: dict[str, str] = {}
 
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         return self._d.get(key)
 
     def set(self, key: str, value: str, ex: int | None = None) -> None:
@@ -76,7 +76,7 @@ class SessionStore:
     def _key(self, session_id: str) -> str:
         return f"arya:session:{session_id}"
 
-    def load(self, session_id: str) -> Optional[SessionState]:
+    def load(self, session_id: str) -> SessionState | None:
         raw = self._r.get(self._key(session_id))
         return SessionState.from_json(raw) if raw else None
 
